@@ -1,5 +1,5 @@
 """The Scala twin of SocSpec (src/riscq/soc/spec) derives the same host map and channel tables as
-riscq.map for every config: `mill runMain riscq.soc.spec.PrintSocMap` prints them as JSON and this
+riscq.map for every config: `./mill runMain riscq.soc.spec.PrintSocMap` prints them as JSON and this
 test diffs them. Needs mill, so it runs with the co-sim tier."""
 
 import json
@@ -19,7 +19,7 @@ pytestmark = pytest.mark.cosim
 
 
 def _scala_map(config: Path) -> dict:
-    r = subprocess.run(["mill", "runMain", "riscq.soc.spec.PrintSocMap", str(config)],
+    r = subprocess.run([str(REPO_ROOT / "mill"), "runMain", "riscq.soc.spec.PrintSocMap", str(config)],
                        cwd=REPO_ROOT, capture_output=True, text=True, check=True)
     line = [ln for ln in r.stdout.splitlines() if ln.startswith("{")][-1]
     return json.loads(line)

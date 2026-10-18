@@ -1,5 +1,5 @@
 """Generate the sim RTL (PulseTableSoc.v + $readmemb .bin files) from a SocParams JSON via
-mill runMain riscq.soc.GenPulseTableSocJson — only when the config changed."""
+./mill runMain riscq.soc.GenPulseTableSocJson — only when the config changed."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def ensure_rtl(config_json: str | Path, build_dir: str | Path, force: bool = Fal
             and (rtl_dir / "PulseTableSoc.v").exists()):
         return rtl_dir
 
-    cmd = ["mill", "runMain", "riscq.soc.GenPulseTableSocJson", str(config_json.resolve()),
+    cmd = [str(REPO_ROOT / "mill"), "runMain", "riscq.soc.GenPulseTableSocJson", str(config_json.resolve()),
            str(rtl_dir.resolve())]
     r = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
     if r.returncode != 0 or not (rtl_dir / "PulseTableSoc.v").exists():

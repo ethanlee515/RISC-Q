@@ -36,7 +36,7 @@ export RISCQ_FMAX_TARGET_MHZ="${RISCQ_FMAX_TARGET_MHZ:-526}"
 if [ "${RISCQ_SKIP_GEN:-0}" != "1" ]; then
   rm -rf "$WS"; mkdir -p "$WS"
   echo "[coreband] generating RTL (CoreBandBench) → $WS"
-  ( cd "$REPO_DIR" && mill runMain riscq.soc.GenCoreBandBench "$WS" )
+  ( cd "$REPO_DIR" && ./mill runMain riscq.soc.GenCoreBandBench "$WS" )
 else
   echo "[coreband] RISCQ_SKIP_GEN=1 — reusing RTL in $WS"
   [ -f "$WS/CoreBandBench.v" ] || { echo "[coreband] no $WS/CoreBandBench.v — run once without RISCQ_SKIP_GEN" >&2; exit 1; }

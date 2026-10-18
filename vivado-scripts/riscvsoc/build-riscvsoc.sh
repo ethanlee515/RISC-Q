@@ -33,7 +33,7 @@ WS="$REPO_DIR/build/${RISCQ_PROJ_NAME:-riscvsoc}"
 if [ "${RISCQ_SKIP_GEN:-0}" != "1" ]; then
   rm -rf "$WS"; mkdir -p "$WS"
   echo "[riscvsoc] generating RTL (PulseTableSoc qubitNum=$QUBITS, vivado=false) → $WS"
-  ( cd "$REPO_DIR" && mill runMain riscq.soc.GenPulseTableSocOoc "$QUBITS" "$WS" )
+  ( cd "$REPO_DIR" && ./mill runMain riscq.soc.GenPulseTableSocOoc "$QUBITS" "$WS" )
 else
   echo "[riscvsoc] RISCQ_SKIP_GEN=1 — reusing RTL in $WS"
   [ -f "$WS/PulseTableSoc.v" ] || { echo "[riscvsoc] no $WS/PulseTableSoc.v — run once without RISCQ_SKIP_GEN" >&2; exit 1; }

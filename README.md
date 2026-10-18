@@ -33,7 +33,7 @@ For generating the RTL and building the FPGA image:
 |---|---|---|
 | Linux x86-64 | — | developed on Ubuntu 24.04 |
 | JDK | 21 (tested) | runs mill / Scala 2.12.18 |
-| [mill](https://mill-build.org) | 1.1.0 | pinned in `.mill-version`. Install the mill launcher script. On the first run it fetches that version, Scala and the Maven dependencies (needs network). |
+| [mill](https://mill-build.org) | 1.1.0 | pinned in `.mill-version`; the `./mill` launcher is included in the repository. On the first run it fetches that version, Scala and the Maven dependencies (needs network and `curl`). |
 | git | — | with submodule support |
 | AMD Vivado | **2026.1** | must be on `PATH` (or set `RISCQ_VIVADO_BIN`). Needs Zynq UltraScale+ RFSoC device support and a license that covers `xczu49dr`. The flow uses the Zynq UltraScale+ PS, RF Data Converter, SmartConnect and Processor System Reset IPs. No board files are needed. |
 | Machine | ≥ 32 GB RAM | the 14-qubit implementation peaks at ~16 GB |
@@ -64,7 +64,7 @@ cd vivado-scripts/riscvsoc-bd
 The script runs two steps:
 
 1. **RTL generation (mill).** It runs
-   `mill runMain riscq.soc.GenPulseTableSocJson <config> build/<proj> vivado`. On the first run this
+   `./mill runMain riscq.soc.GenPulseTableSocJson <config> build/<proj> vivado`. On the first run this
    compiles SpinalHDL and the project, which takes a few minutes.
 2. **Vivado (batch).** It runs `flow-bd.tcl` and logs to `build/<proj>/vivado.log`. A full 14-qubit
    run takes a few hours.
@@ -119,9 +119,9 @@ the results of record, and how this flow differs from the out-of-context bench.
 ## Other entry points
 
 ```bash
-mill runMain riscq.riscv.RiscqGen                # the core's Verilog
-mill runMain riscq.soc.sim.PulseTableSocSim      # bus-driven SoC simulation sign-off
-mill runMain riscq.soc.sim.PulseTableSocCpuSim   # CPU-in-the-loop pulse simulation
+./mill runMain riscq.riscv.RiscqGen                # the core's Verilog
+./mill runMain riscq.soc.sim.PulseTableSocSim      # bus-driven SoC simulation sign-off
+./mill runMain riscq.soc.sim.PulseTableSocCpuSim   # CPU-in-the-loop pulse simulation
 ```
 
 The per-module simulations and benches are listed in the docs: [docs/README.md](docs/README.md).

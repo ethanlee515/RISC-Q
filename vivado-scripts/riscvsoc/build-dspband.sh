@@ -36,7 +36,7 @@ if [ "${RISCQ_SKIP_GEN:-0}" != "1" ]; then
   echo "[dspband] generating RTL from $CFG → $WS"
   # mill must run with the repo root as cwd — from anywhere else it treats that dir as a project
   # root (creates a stray out/) and can't find the riscq classes.
-  ( cd "$REPO_DIR" && mill runMain riscq.soc.GenPulseTableSocJson "$CFG" "$WS" )
+  ( cd "$REPO_DIR" && ./mill runMain riscq.soc.GenPulseTableSocJson "$CFG" "$WS" )
   cp "$CFG" "$WS/config.json"
 else
   echo "[dspband] RISCQ_SKIP_GEN=1 — reusing RTL in $WS"

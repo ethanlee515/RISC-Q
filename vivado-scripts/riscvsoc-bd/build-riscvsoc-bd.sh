@@ -52,7 +52,7 @@ mkdir -p "$BUILD"
 # 1) RTL — the BD (vivado=true) form — emitted INTO the project build dir from the SocParams JSON.
 if [ "${RISCQ_SKIP_GEN:-0}" != "1" ]; then
   echo "[riscvsoc-bd] generating BD RTL (GenPulseTableSocJson $CONFIG, vivado=true) → $BUILD"
-  ( cd "$REPO_DIR" && mill runMain riscq.soc.GenPulseTableSocJson "$CONFIG" "$BUILD" vivado )
+  ( cd "$REPO_DIR" && ./mill runMain riscq.soc.GenPulseTableSocJson "$CONFIG" "$BUILD" vivado )
 else
   echo "[riscvsoc-bd] RISCQ_SKIP_GEN=1 — reusing RTL in $BUILD"
   [ -f "$BUILD/PulseTableSoc.v" ] || { echo "[riscvsoc-bd] no $BUILD/PulseTableSoc.v — run once without RISCQ_SKIP_GEN" >&2; exit 1; }
