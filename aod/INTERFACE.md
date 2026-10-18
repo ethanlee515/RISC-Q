@@ -3,6 +3,8 @@
 `AodTop` is the canonical standalone component. It composes staged posted
 register writes, the shared RISC-Q timed queue, snapshot storage, coefficient
 loading and `AodEngine`. There are no AXI/TileLink ports or SoC dependencies.
+The separate [host adapter](HOST.md) adds a backpressured TileLink setup window,
+clock crossing, reset control and optional minimal diagnostic readback.
 See [SCHEDULING.md](SCHEDULING.md) for timing constants, queue capacity/pacing,
 errors, reset behavior and the RF-off intervals between pulsed movements.
 
@@ -38,9 +40,8 @@ preparing, playing or draining, including its phase snapshot. `setup_busy` stays
 high while an accepted write drains through the broadcast pipeline. Acceptance
 is not completion of every memory copy. Finish the upload, deassert
 `setup.valid`, and wait for `setup_busy` low before submitting movements.
-A future host adapter must preserve the ready/valid handshake and cross clock
-domains explicitly; AXI/TileLink bus
-protocols are not present inside this standalone module.
+`AodHostAdapter` preserves this handshake and acknowledges only after drain.
+AXI/TileLink protocols remain outside the standalone waveform component.
 
 Tables are shared by all jobs and are not part of the per-movement snapshot.
 The top enforces setup/playback exclusion. An offered write waits until all
@@ -114,6 +115,6 @@ idle. Direct engine users need soft reset for at least eight clocks between
 independent shots, then a `tones + 8` settling guard. The canonical top automates
 this sequence. Direct CW users should not reset between automatic sweeps.
 
-Host adapters, clock crossing, firmware ABI, converter integration and FPGA
+Global SoC wiring/address allocation, firmware ABI, converter integration and FPGA
 constraints/timing closure remain future work. Simulation and lint do not
 establish board timing or RF behavior.

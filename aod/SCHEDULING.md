@@ -3,8 +3,10 @@
 `AodTop` is the standalone runtime frontend intended for later RISC-Q
 integration. It accepts posted `cmd` writes, backpressured coefficient `setup`,
 and an external 32-bit `time`. It instantiates the same `TimedQueue` used by
-RISC-Q, shared through the `timing` Mill module. There is no SoC address allocation,
-bus adapter, firmware driver, clock crossing or converter adapter in this pass.
+RISC-Q, shared through the `timing` Mill module. The separate
+[host setup adapter](HOST.md) supplies setup bus/clock crossing and optional
+diagnostics. SoC address allocation, CPU/link wiring, firmware drivers and
+converter integration remain future work.
 `AodEngine` remains available for direct waveform control and engine tests;
 there is one production runtime top.
 
