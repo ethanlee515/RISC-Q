@@ -13,7 +13,7 @@ SW_ROOT = Path(__file__).resolve().parents[1]
 
 # the board-import surface (riscq.board.pynq_driver is the one exception: it
 # imports pynq at module top and only ever runs on the board)
-BOARD_MODULES = ["riscq", "riscq.map", "riscq.build", "riscq.run",
+BOARD_MODULES = ["riscq", "riscq.map", "riscq.build", "riscq.run", "riscq.aod",
                  "riscq.driver", "riscq.driver.cosim", "riscq.driver.remote",
                  "riscq.board", "riscq.board.server"]
 

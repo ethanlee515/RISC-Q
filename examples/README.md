@@ -1,17 +1,23 @@
 # examples — co-simulation notebooks
 
-Runnable notebooks that drive the **Verilated `PulseTableSoc`** under cocotb — the same host control
+Runnable notebooks that drive **Verilated RISC-Q SoCs** under cocotb — the same host control
 software (`riscq.lang`/`riscq.run` to compile and run on-core kernels, `riscq.cal`/`riscq.sim` for
 the calibrations) that runs on the ZCU216 board, here against a Verilated SoC instead of real
 hardware.
 
-Start with [`amplitude_sweep.ipynb`](amplitude_sweep.ipynb) — a minimal drive demo — then the
+For AOD, start with [aod_moves.ipynb](aod_moves.ipynb): Python → C → RISC-V,
+explicit coefficient setup, actual CPU execution, native X/Y capture and a
+parameter-only rerun. Its [workflow/environment guide](../docs/software/aod.md)
+provides a locked uv environment and needs no board or quantum model.
+
+For superconducting drive, start with [`amplitude_sweep.ipynb`](amplitude_sweep.ipynb) — a minimal drive demo — then the
 calibration notebook, which runs against a `TwoLevelModel` with **planted ground truth** instead of
 a real qubit (a co-sim analogue of the hardware `Calibration_X6Y3` flow; the calibration library is
 described in [docs/software/cal.md](../docs/software/cal.md)).
 
 | Notebook | What it shows |
 |---|---|
+| [`aod_moves.ipynb`](aod_moves.ipynb) | board-free AOD walkthrough: inspect Python/C/RISC-V artifacts, upload profiles/gain tables over AXI, execute paired frequency sweeps, verify timestamps/off intervals, plot actual complex output, rerun with changed phase |
 | [`amplitude_sweep.ipynb`](amplitude_sweep.ipynb) | the smallest end-to-end example — an on-core `@kernel` fires a train of gate pulses with a ramping amplitude; the notebook captures the raw gate **DAC waveform** off the SoC and plots the pulse train, the pulse shape, and the (linear) peak-vs-amplitude. No qubit model — just the drive signal the hardware emits |
 | [`single_qubit_calibration.ipynb`](single_qubit_calibration.ipynb) | the `Calibration_X6Y3` flow, one experiment per cell — ReadoutCalibration → Separation → Fidelity → ReadoutFidelity → Frequency → Amplitude (coarse) → Amplitude (fine) → Phase — pulling a deliberately-detuned `Config` back to the planted `f_ge`/Rabi ground truth |
 | [`calibration_x6y3_cosim.ipynb`](calibration_x6y3_cosim.ipynb) | the full **qcal-parity** version of the same chain: the config of record is a qcal tree ([`calibration_x6y3_cosim.yaml`](calibration_x6y3_cosim.yaml)) round-tripped through `Config.from_qcal`/`save_qcal` every cell, `readout/herald: true` (every counts shot post-selected like qcal's transpiler), **both** cores calibrated simultaneously on the frequency-multiplexed readout, plus the reference notebook's absolute X90 `Phase` pass and the X's own axis phase |

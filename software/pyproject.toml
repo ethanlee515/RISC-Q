@@ -12,6 +12,11 @@ dependencies = ["numpy", "Pyro5"]
 # scipy is host-side only (riscq.cal.fits); the offline board install stays numpy+Pyro5
 [project.optional-dependencies]
 cal = ["scipy"]
+# Waveform notebooks need no quantum/atom physics model. Keep them separate from cal.
+notebook = ["cocotb==1.8.1", "matplotlib>=3.8", "jupyterlab>=4,<5", "nbconvert>=7,<8", "ipykernel>=6,<7"]
+
+[dependency-groups]
+dev = ["pytest>=8,<10"]
 
 [project.scripts]
 riscq-board-server = "riscq.board.server:main"

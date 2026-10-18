@@ -6,15 +6,19 @@ it does not use its channel DSL, RFDC configuration or SocSpec.
 from __future__ import annotations
 
 import json
+import math
+import operator
 import time
 from pathlib import Path
 from types import SimpleNamespace
 
-from riscq.build import Image, compile_c
+from riscq.build import Image, Program, compile_c
 from riscq.driver import Driver
 
 
 class AodMap:
+    HOSTWIN_BYTES = 1 << 24
+
     def __init__(self, manifest: dict):
         if manifest.get("kind") != "aod" or manifest.get("version") != 1:
             raise ValueError("expected AodSoc manifest version 1")
@@ -37,7 +41,9 @@ class AodMap:
         values = {"RQ_MEM_BASE": 0x80000000, "RQ_MEM_BYTES": self.mem_bytes,
                   "RQ_CTRL_TIME": c["time"], "RQ_CTRL_TIME_CMP": c["time_cmp"],
                   "RQ_CTRL_WAIT_TIME_CMP": c["wait_time_cmp"], "RQ_CTRL_DONE": c["done"],
-                  "RQ_AOD": c["aod"], "RQ_HOSTWIN_BASE": c["host_window"], "RQ_AOD_TONES": m["tones"], "RQ_AOD_AXES": m["axes"],
+                  "RQ_HOSTWIN": c["host_window"], "RQ_AOD": c["aod"],
+                  "RQ_HOSTWIN_BASE": c["host_window"], "RQ_AOD_TONES": m["tones"],
+                  "RQ_AOD_AXES": m["axes"],
                   "RQ_AOD_QUEUE_DEPTH": m["queue_depth"], "RQ_AOD_LINK_PIPE": m["link_pipe"],
                   "RQ_AOD_MINIMUM_ENQUEUE_LEAD": m["minimum_enqueue_lead"],
                   "RQ_AOD_MOVE_STEPS": m["move_steps"], "RQ_AOD_LEAD_TIME": m["lead_time"],
@@ -64,6 +70,76 @@ class AodMap:
         header = (Path(__file__).resolve().parent.parent / "fw" / "riscq_aod.h").read_text()
         return compile_c(source, self, extra_headers={"riscq_aod.h": header})
 
+    def frequency(self, hz: float) -> int:
+        """Signed int32 bit pattern of a Q0.32 phase increment; |f| < fs/2."""
+        rate = self.manifest["dsp_hz"]
+        if not math.isfinite(hz) or not -rate / 2 < hz < rate / 2:
+            raise ValueError("frequency/displacement must be strictly inside complex Nyquist")
+        return _int32(round(hz / rate * (1 << 32)))
+
+    def phase(self, turns: float) -> int:
+        """Initial phase in turns, wrapped to one turn and encoded for an int32 kernel."""
+        if not math.isfinite(turns):
+            raise ValueError("phase must be finite")
+        return _int32(round((turns % 1) * (1 << 32)))
+
+    def amplitude(self, fraction: float) -> int:
+        """Q1.15 amplitude multiplier, not a promise of absolute optical/DAC power."""
+        if not math.isfinite(fraction) or not 0 <= fraction <= 1:
+            raise ValueError("amplitude fraction must be in [0, 1]")
+        return round(fraction * 32768)
+
+    def start_spacing(self, ratio: int) -> int:
+        ratio = operator.index(ratio)
+        m = self.manifest
+        if not m["ratio_min"] <= ratio <= m["ratio_max"]:
+            raise ValueError("ratio outside this build's supported range")
+        return m["move_steps"] * ratio + m["lead_time"] + m["axes"] * (m["tones"] + 8) + 64
+
+
+def _int32(word: int) -> int:
+    return (int(word) + (1 << 31)) % (1 << 32) - (1 << 31)
+
+
+def read_profile(path: str | Path) -> list[int]:
+    """Read the packed hexadecimal rows of an AOD .mem profile."""
+    words = []
+    for line in Path(path).read_text().splitlines():
+        words.extend(int(word, 16) for word in line.split("//", 1)[0].split())
+    return words
+
+
+def compile_kernel(k, mapping: AodMap, **bindings) -> Program:
+    """Reuse RISC-Q's typed Python kernel/IR/C compiler with AOD intrinsics.
+
+    Bind integer constants and Array sizes as usual. Unbound integers are host
+    parameters. RF ParamTables and cross-core operations do not belong to AodSoc.
+    """
+    from riscq.lang.kernel import Kernel, KernelCompileError
+    from riscq.lang import compile_kernel as shared_compile
+    # Validate peripheral-specific annotations before the shared resolver tries
+    # to look up superconducting channels/event sinks in an AOD map.
+    import inspect
+    from riscq.lang import Array
+    if not isinstance(k, Kernel):
+        raise KernelCompileError("compile_kernel needs an @kernel function")
+    if any(t not in (int, Array) for name, t in inspect.get_annotations(k.fn, eval_str=True).items()
+           if name != "return"):
+        raise KernelCompileError("AOD kernels support int and Array parameters")
+    header = (Path(__file__).resolve().parent.parent / "fw" / "riscq_aod.h").read_text()
+    return shared_compile(k, mapping, include=[("riscq_aod.h", header)],
+                          runtime_header="riscq_aod.h", **bindings)
+
+
+def _kernel_only(*args):
+    raise RuntimeError("AOD intrinsics execute in compiled @kernel firmware")
+
+
+# By-name calls are lowered by the shared frontend to these C-header functions.
+# Importing them documents the kernel API and catches accidental host execution.
+aod_init = aod_rate = aod_axis = aod_tone = aod_fire_at = aod_start_spacing = _kernel_only
+now = wait_until = _kernel_only
+
 
 class AodSession:
     """Host setup in word transactions; CPU reset and AOD flush are distinct.
@@ -88,14 +164,50 @@ class AodSession:
         # Successful response means the AOD reset has completed. It preserves RAM/tables/time.
         d.write32(m.host["setup"] + m.setup["reset"], 1)
 
-    def load(self, image: Image):
+    def load(self, image: Image | Program):
         self.stop()
+        self.program = image if isinstance(image, Program) else None
+        image = image.image if self.program is not None else image
         if image.entry != 0x80000000 or len(image.data) > self.map.mem_bytes:
             raise ValueError("image does not fit this AodSoc")
         # Full words, including the final padded word: setup/CPU-RAM paths are word-oriented.
         data = image.data + bytes((-len(image.data)) % 4)
         for i in range(0, len(data), 4):
             self.driver.write32(self.map.host["program"] + i, int.from_bytes(data[i:i + 4], "little"))
+
+    def _symbol_address(self, name: str, index: int = 0) -> int:
+        if getattr(self, "program", None) is None:
+            raise RuntimeError("load a compiled Program before accessing named parameters/results")
+        addr, size = self.program.image.symbols[name]
+        if index < 0 or 4 * (index + 1) > size:
+            raise ValueError("symbol index outside its allocated storage")
+        offset = addr - self.program.image.entry + 4 * index
+        if offset < 0 or offset + 4 > self.map.mem_bytes:
+            raise ValueError("symbol is outside program RAM")
+        return self.map.host["program"] + offset
+
+    def parameters(self, **values):
+        self._require_stopped()
+        updates = []
+        for name, value in values.items():
+            if getattr(self, "program", None) is None or name not in self.program.params:
+                raise ValueError(f"{name!r} is not a runtime kernel parameter")
+            word = operator.index(value)
+            if not -(1 << 31) <= word < 1 << 32:
+                raise ValueError("parameter must fit an int32/uint32 word")
+            updates.append((self._symbol_address(name), word & 0xffffffff))
+        for address, word in updates:
+            self.driver.write32(address, word)
+
+    def result(self, name: str) -> list[int]:
+        if getattr(self, "program", None) is None or name not in self.program.arrays:
+            raise ValueError(f"{name!r} is not a kernel result array")
+        if name in self.program.host_arrays:
+            offset, count = self.program.host_arrays[name]
+            raw = self.driver.read_host(offset, count * 4)
+            return [int.from_bytes(raw[i:i+4], "little", signed=True) for i in range(0, len(raw), 4)]
+        return [_int32(self.driver.read32(self._symbol_address(name, i)))
+                for i in range(self.program.arrays[name])]
 
     def _require_stopped(self):
         m = self.map

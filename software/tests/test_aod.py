@@ -77,3 +77,54 @@ def test_host_setup_and_word_packing(mapping):
         session.wait_done(timeout=0)
     d.state = 4
     session.wait_done(timeout=0)
+
+
+from riscq.lang import Array, kernel, KernelCompileError
+from riscq.aod import compile_kernel as compile_aod, aod_init, aod_rate, now, wait_until
+
+
+@kernel
+def parameter_program(out: Array, seed: int):
+    aod_init()
+    aod_rate(8, 1)
+    for i in range(3):
+        out[i] = seed + i
+    wait_until(now() + 512)
+
+
+def test_python_kernel_artifacts_and_parameters(mapping):
+    program = compile_aod(parameter_program, mapping, out=Array(3))
+    assert '#include "riscq_aod.h"' in program.c_source
+    assert '#include "riscq.h"' not in program.c_source
+    assert program.params == {"seed": None}
+    assert program.arrays == {"out": 3}
+    assembly = program.image.disassemble("main")
+    assert '<main>:' in assembly and 'sw' in assembly
+    assert program.image.elf_path.read_bytes()[:4] == b'\x7fELF'
+    assert compile_aod(parameter_program, mapping, out=Array(3)).image.elf_path == program.image.elf_path
+    driver = WordDriver(mapping)
+    session = AodSession(driver, mapping)
+    session.load(program)
+    session.parameters(seed=-7)
+    address = mapping.host["program"] + program.var_addr("seed") - program.image.entry
+    assert driver.words[address] == 0xfffffff9
+    with pytest.raises(ValueError, match="runtime"):
+        session.parameters(typo=1)
+    with pytest.raises(KernelCompileError, match="@kernel"):
+        compile_aod(lambda: None, mapping)
+
+
+def test_physical_unit_conversions(mapping):
+    rate = mapping.manifest["dsp_hz"]
+    assert mapping.frequency(rate / 4) == 0x40000000
+    assert mapping.frequency(-rate / 4) == -0x40000000
+    assert mapping.phase(0.5) == -0x80000000
+    assert mapping.phase(1.25) == mapping.phase(0.25) == 0x40000000
+    assert mapping.amplitude(0.5) == 16384
+    for value in (float('nan'), float('inf'), rate / 2):
+        with pytest.raises(ValueError):
+            mapping.frequency(value)
+    with pytest.raises(ValueError):
+        mapping.amplitude(1.1)
+    with pytest.raises(ValueError):
+        mapping.start_spacing(0)

@@ -121,8 +121,10 @@ Generate the default 32-tone, two-axis SoC and its matching manifest:
 
 `riscq.aod.AodMap` consumes that manifest and reuses `compile_c`, RISC-V startup,
 soft arithmetic support and the unified-RAM linker layout. `riscq_aod.h` supplies
-raw-code movement helpers and existing `now`/`wait_until`. The superconducting
-Python kernel/channel DSL and board server/RFDC bring-up are not AOD backends.
+raw-code movement helpers and existing `now`/`wait_until`. The [AOD notebook workflow](../software/aod.md) now reuses the shared Python
+kernel compiler with an AOD runtime header, named parameters/results and native
+X/Y simulation capture. Superconducting ParamTables/calibration channels and the
+board server/RFDC bring-up remain separate backends.
 
 ```python
 from pathlib import Path

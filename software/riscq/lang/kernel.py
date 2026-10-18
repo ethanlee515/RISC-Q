@@ -196,7 +196,7 @@ class _RTable:
 
 
 def compile_kernel(k: Kernel, soc_map: SocMap, tables: dict[str, ParamTable] | None = None,
-                   include=(), core: int = 0, **bindings) -> build.Program:
+                   include=(), core: int = 0, runtime_header: str = "riscq.h", **bindings) -> build.Program:
     """Compile one specialization of `k` for `core`: python -> IR -> C -> flat image.
 
     `core` picks the core whose channel geometry (`soc_map.channel(index, core)`) and header
@@ -211,7 +211,8 @@ def compile_kernel(k: Kernel, soc_map: SocMap, tables: dict[str, ParamTable] | N
     #included after riscq.h and hashed into the build-cache key; `bindings` bake int parameters
     as constants and size Array parameters (`counts=Array(31)`). Returns a Program carrying the
     params layout, the array table, the per-channel envelope images, and each live table's slot
-    codes for riscq.run to upload."""
+    codes for riscq.run to upload. `runtime_header` selects the C intrinsic interface;
+    the AOD wrapper supplies riscq_aod.h while ordinary kernels retain riscq.h."""
     fe = _FrontEnd(k, soc_map, dict(tables or {}), dict(bindings), int(core))
     kir = fe.compile()
     extra_headers = {}
@@ -220,9 +221,10 @@ def compile_kernel(k: Kernel, soc_map: SocMap, tables: dict[str, ParamTable] | N
             name, text = inc
         else:
             name, text = Path(inc).name, Path(inc).read_text()
-        kir.includes.append(name)
+        if name != runtime_header:
+            kir.includes.append(name)
         extra_headers[name] = text
-    c_source = backend_c.emit(kir)
+    c_source = backend_c.emit(kir, runtime_header=runtime_header)
     image = build.compile_c(c_source, soc_map, extra_headers=extra_headers or None, core=fe.core)
     params: dict[str, int | None] = {name: None for name in kir.params}
     envelopes = {ch: alloc.image() for ch, alloc in fe.allocs.items() if alloc.image()}

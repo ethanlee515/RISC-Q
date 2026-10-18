@@ -10,6 +10,22 @@ The Python package for the riscq PulseTableSoc: kernel compiler (`riscq.lang`), 
 Host (dev machine): `pip install -e .[cal]` — scipy is the `cal` extra (fit helpers only);
 the co-sim additionally needs the dev environment's cocotb + verilator + riscv-gcc.
 
+## AOD waveform notebook
+
+The [AOD walkthrough](../examples/aod_moves.ipynb) runs a compiled Python experiment
+on the actual simulated CPU, displays C and RISC-V artifacts, and plots native
+X/Y output. From the repository root:
+
+```sh
+uv sync --project software --extra notebook --locked
+uv run --project software --extra notebook --locked jupyter lab examples/aod_moves.ipynb
+```
+
+This uses `software/.venv` and the checked-in lockfile. No board, Vivado or physics
+model is needed. Native simulator/compiler tools must be on PATH. See
+[docs/software/aod.md](../docs/software/aod.md) for setup, dependencies, headless
+execution and the separation between host setup and on-core execution.
+
 ## Board install (offline)
 
 The ZCU216 ARM runs the same wheel with only numpy + Pyro5 (already-shipped PYNQ packages

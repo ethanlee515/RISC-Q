@@ -22,6 +22,26 @@ static inline void aod_tone(unsigned axis, unsigned tone, uint32_t frequency,
     aod_write(rq_aod_tones[axis][tone][2], phase0);
     aod_write(rq_aod_tones[axis][tone][3], cal_a | ((uint32_t)cal_b << 16));
 }
+static inline void aod_rate(uint32_t ratio, uint32_t decimation) {
+    aod_write(RQ_AOD_RATIO, ratio);
+    aod_write(RQ_AOD_DECIMATION, decimation);
+}
+static inline void aod_axis(unsigned axis, uint32_t mask_lo, uint32_t mask_hi, uint32_t amplitude) {
+    uint32_t base = rq_aod_channels[axis];
+    aod_write(base, mask_lo);
+    aod_write(base + 4, mask_hi);
+    aod_write(base + 8, amplitude);
+}
+static inline void aod_init(void) {
+    aod_rate(RQ_AOD_RATIO_MIN, 1);
+    for (unsigned axis = 0; axis < RQ_AOD_AXES; ++axis) {
+        aod_axis(axis, 0, 0, 0);
+        aod_write(rq_aod_channels[axis] + 20, 1); /* gain table enabled, zoom 0 */
+        aod_write(rq_aod_channels[axis] + 24, 0);
+        for (unsigned tone = 0; tone < RQ_AOD_TONES; ++tone)
+            aod_tone(axis, tone, 0, 0, 0, 32768, 32768);
+    }
+}
 static inline void aod_fire_at(uint32_t time) {
     aod_write(RQ_AOD_START, time);
     aod_write(RQ_AOD_FIRE, 1);

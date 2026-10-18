@@ -51,6 +51,19 @@ class Image:
     data: bytes
     symbols: dict[str, tuple[int, int]]
     entry: int = MEM_BASE
+    elf_path: Path | None = field(default=None, compare=False)
+
+    def disassemble(self, symbol: str | None = None) -> str:
+        """Inspect the exact locally compiled ELF (wire-loaded images have no ELF)."""
+        if self.elf_path is None or not self.elf_path.is_file():
+            raise RuntimeError("this image has no local ELF artifact; compile it locally first")
+        objdump = shutil.which("riscv64-unknown-elf-objdump")
+        if objdump is None:
+            raise RuntimeError("riscv64-unknown-elf-objdump not found on PATH")
+        if symbol is not None and symbol not in self.symbols:
+            raise KeyError(symbol)
+        flag = "-d" if symbol is None else f"--disassemble={symbol}"
+        return subprocess.check_output([objdump, flag, str(self.elf_path)], text=True)
 
 
 class Program:
@@ -152,7 +165,7 @@ def compile_c(c_source: str, soc_map: BuildMap, extra_headers: dict[str, str] | 
     bin_path = build_dir / "main.bin"
     sym_path = build_dir / "symbols.json"
 
-    if not (bin_path.exists() and sym_path.exists()):
+    if not (bin_path.exists() and sym_path.exists() and (build_dir / "main.elf").exists()):
         if build_dir.exists():
             shutil.rmtree(build_dir)
         build_dir.mkdir(parents=True)
@@ -180,4 +193,4 @@ def compile_c(c_source: str, soc_map: BuildMap, extra_headers: dict[str, str] | 
     if len(data) > soc_map.mem_bytes:  # belt: link.ld's ASSERT should have caught this
         raise RuntimeError(f"image {len(data)} B exceeds RAM {soc_map.mem_bytes} B")
     symbols = {k: tuple(v) for k, v in json.loads(sym_path.read_text()).items()}
-    return Image(data=data, symbols=symbols)
+    return Image(data=data, symbols=symbols, elf_path=(build_dir / "main.elf").resolve())

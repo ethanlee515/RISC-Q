@@ -71,6 +71,8 @@ def _tail(log_path: Path, n: int = 30) -> str:
 def _sim_main(config_json: Path, build_dir: Path) -> None:
     """Subprocess body: ensure RTL, verilate (cached on RTL hash), run the cocotb bench."""
     from cocotb.runner import get_runner
+    # Make editable installs visible to the simulator's embedded interpreter.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
     rtl_dir = ensure_rtl(config_json, build_dir)
     top_v = rtl_dir / "PulseTableSoc.v"

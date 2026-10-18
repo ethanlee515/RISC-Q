@@ -6,7 +6,10 @@ and targeting the AMD/Xilinx **ZCU216** RFSoC board (`xczu49dr-ffvf1760-2-e`).
 [AodSoc](docs/soc/AodSoc.md) adds a separate RISC-V-controlled acousto-optic
 movement SoC with host coefficient setup and timed paired X/Y output. Its native
 complex-output control path is simulated; AOD RFDC/board integration is pending.
-The board flow below remains the superconducting build.
+The board flow below remains the superconducting build. The executed
+[AOD notebook](examples/aod_moves.ipynb) demonstrates Python/C/RISC-V compilation,
+host setup and native X/Y output without a board; see its
+[environment and workflow guide](docs/software/aod.md).
 
 Each qubit gets its own small in-order RV32I control core (optional Zmmul). The core runs the
 control program and schedules pulses ahead of time. Converter-edge DSP modules generate the

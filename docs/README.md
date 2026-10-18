@@ -142,4 +142,5 @@ the [software package README](../software/README.md)** (install, board server, t
 
 | Doc | What |
 |---|---|
+| [AOD notebook workflow](software/aod.md) | Reproducible environment, Python/C/RISC-V inspection, host coefficient setup, real CPU co-simulation and native X/Y captures |
 | [`riscq.cal`](software/cal.md) | The calibration library: sequence · axes · measure · analysis on one batched kernel; writing a calibration; the timing rules; verification tiers |

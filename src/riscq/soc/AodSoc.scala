@@ -218,12 +218,22 @@ class AodSoc(val config: AodSocConfig = AodSocConfig(),
   controls.up.setUpConnection(a = StreamPipe.FULL, d = StreamPipe.FULL)
 }
 
+/** Simulation-only observation port; no CPU/RAM access bypasses are exposed. */
+class AodSocSimulation(config: AodSocConfig) extends AodSoc(config) {
+  val sampleTime = out UInt(32 bits)
+  sampleTime := dsp.time
+}
+
 /** Native-output SoC RTL; this does not generate an RFDC board design. */
 object GenAodSoc extends App {
   val dir = args.find(!_.startsWith("--")).getOrElse("out/aod-soc-rtl")
-  require(args.filter(_.startsWith("--")).forall(_ == "--minimal"), "supported flag: --minimal")
-  val config = AodSocConfig(withDiagnostics = !args.contains("--minimal"))
-  SpinalConfig(targetDirectory = dir, romReuse = true).generateVerilog(new AodSoc(config))
+  require(args.filter(_.startsWith("--")).forall(a => a == "--minimal" || a == "--sim"), "supported flags: --minimal, --sim")
+  val simulation = args.contains("--sim")
+  // Same production trajectory geometry, fewer parallel tones for interactive simulation.
+  val config = AodSocConfig(aod = if (simulation) AodConfig.default.copy(tones = 2) else AodConfig.default,
+    queueDepth = if (simulation) 2 else 4, withDiagnostics = !args.contains("--minimal"))
+  SpinalConfig(targetDirectory = dir, romReuse = true).generateVerilog(
+    if (simulation) new AodSocSimulation(config).setDefinitionName("AodSoc") else new AodSoc(config))
   java.nio.file.Files.write(java.nio.file.Paths.get(dir, "aod-soc.json"),
     ujson.write(AodSocMap.manifest(config), indent = 2).getBytes("UTF-8"))
 }
