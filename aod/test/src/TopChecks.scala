@@ -2,150 +2,156 @@ package riscq.aod
 
 import spinal.core.sim._
 
-/** AXI driver deliberately holds requests through an observed handshake edge. */
+/** Native posted-write driver and ready/valid coefficient producer. */
 class TopDriver(val io: TopPorts) {
   import TestSupport._
   val clock = new Clock(io.clk)
   io.rst #= true; io.trig_in #= false
-  io.s_axi_awaddr #= 0; io.s_axi_awprot #= 0; io.s_axi_awvalid #= false
-  io.s_axi_wdata #= 0; io.s_axi_wstrb #= 15; io.s_axi_wvalid #= false
-  io.s_axi_bready #= false
-  io.s_axi_araddr #= 0; io.s_axi_arprot #= 0; io.s_axi_arvalid #= false
-  io.s_axi_rready #= false
-  io.probe_ch #= false; io.probe_tone #= 0; io.probe_addr #= 0
-  clock.tick(20); io.rst #= false; clock.tick(20)
+  io.cmd.valid #= false; io.cmd.address #= 0; io.cmd.data #= 0
+  io.setup.valid #= false; io.setup.table #= 0; io.setup.channel #= false
+  io.setup.address #= 0; io.setup.beat #= 0; io.setup.data #= 0
+  io.probe_ch #= false; io.probe_tone #= 0; io.probe_addr #= 0; io.probe_beat #= 0
+  val snapshots = scala.collection.mutable.Map.empty[(Int, Int), BigInt]
+  val snapshotEvents = scala.collection.mutable.ArrayBuffer.empty[(Int, Int, BigInt)]
+  clock.before = () => {
+    if (!io.rst.toBoolean && io.status.pa_we.toBoolean) {
+      val ch = if (io.status.pa_ch.toBoolean) 1 else 0
+      val addr = io.status.pa_addr.toInt
+      val data = io.status.pa_data.toBigInt
+      snapshots((ch, addr)) = data; snapshotEvents += ((ch, addr, data))
+    }
+  }
+  clock.tick(20); io.rst #= false; settled()
 
-  def write(addr: Int, data: BigInt, response: Int = 0): Unit = {
-    io.s_axi_awaddr #= addr; io.s_axi_wdata #= word(data)
-    io.s_axi_awvalid #= true; io.s_axi_wvalid #= true
-    clock.until(s"AXI write address 0x${addr.toHexString}", 100)(io.s_axi_awready.toBoolean && io.s_axi_wready.toBoolean)
-    clock.tick()
-    io.s_axi_awvalid #= false; io.s_axi_wvalid #= false
-    clock.until("AXI write response", 100)(io.s_axi_bvalid.toBoolean)
-    assert(io.s_axi_bresp.toInt == response, s"AXI write 0x${addr.toHexString} response=${io.s_axi_bresp.toInt}, expected=$response")
-    io.s_axi_bready #= true; clock.tick(); io.s_axi_bready #= false; clock.tick()
+  // No idle tick: successive calls deliver beats on consecutive rising edges.
+  def write(addr: Int, data: BigInt): Unit = {
+    io.cmd.address #= addr; io.cmd.data #= word(data); io.cmd.valid #= true
+    clock.tick(); io.cmd.valid #= false
   }
-  def read(addr: Int, response: Int = 0): BigInt = {
-    io.s_axi_araddr #= addr; io.s_axi_arvalid #= true
-    clock.until(s"AXI read address 0x${addr.toHexString}", 100)(io.s_axi_arready.toBoolean)
-    clock.tick(); io.s_axi_arvalid #= false
-    clock.until("AXI read response", 100)(io.s_axi_rvalid.toBoolean)
-    val data = io.s_axi_rdata.toBigInt
-    assert(io.s_axi_rresp.toInt == response, s"AXI read 0x${addr.toHexString} response=${io.s_axi_rresp.toInt}")
-    io.s_axi_rready #= true; clock.tick(); io.s_axi_rready #= false; clock.tick()
-    data
+  def load(table: Int, address: Int, data: BigInt, channel: Int = 0, beat: Int = 0): Int = {
+    io.setup.table #= table; io.setup.channel #= (channel == 1)
+    io.setup.address #= address; io.setup.beat #= beat; io.setup.data #= word(data)
+    io.setup.valid #= true; sleep(1)
+    var stalled = 0
+    while (!io.setup.ready.toBoolean && stalled < 100) { clock.tick(); stalled += 1 }
+    assert(io.setup.ready.toBoolean, "coefficient write timed out")
+    clock.tick(); io.setup.valid #= false
+    stalled
   }
-  def expect(addr: Int, value: BigInt): Unit = {
-    val got = read(addr)
-    assert(got == word(value), s"register 0x${addr.toHexString} got=0x${got.toString(16)} expected=0x${word(value).toString(16)}")
+  def settled(): Unit = {
+    sleep(1)
+    clock.until("configuration and coefficient drain", 200)(io.config_ready.toBoolean)
   }
-  def poll(label: String, limit: Int = 20000)(p: => Boolean): Unit = {
-    var i = 0; var ok = p
-    while (!ok && i < limit) { i += 1; ok = p }
-    assert(ok, s"Timeout polling $label ($limit reads)")
+  def poll(label: String, limit: Int = 200000)(p: => Boolean): Unit = clock.until(label, limit)(p)
+  def busy(): Unit = poll("busy", 200)(io.status.busy.toBigInt != 0)
+  def idle(): Unit = {
+    poll("idle")(io.status.busy.toBigInt == 0)
+    poll("sample pipeline drain", 200)(io.dac_valid.toBigInt == 0)
   }
-  def busy(): Unit = poll("busy", 200)((read(0x14) & 1) != 0)
-  def idle(): Unit = poll("idle")((read(0x14) & 1) == 0)
-  def probe(ch: Int = 0, tone: Int = 0, addr: Int = 0): Unit = {
-    io.probe_ch #= (ch == 1); io.probe_tone #= tone; io.probe_addr #= addr; sleep(1)
+  def probe(ch: Int = 0, tone: Int = 0, addr: Int = 0, beat: Int = 0): Unit = {
+    io.probe_ch #= (ch == 1); io.probe_tone #= tone; io.probe_addr #= addr
+    io.probe_beat #= beat; sleep(1)
   }
 }
 
 object TopChecks {
   import TestSupport._
   def ch(c: Int): Int = 0x8000 + c * 0x4000
-  def tone(c: Int, t: Int, field: Int): Int = ch(c) + field * 0x800 + t * 4
-  def en(c: Int): Int = ch(c) + 0x2800
-  def amp(c: Int): Int = ch(c) + 0x2808
-  def sw(c: Int): Int = ch(c) + 0x2810
-  def cfg(c: Int): Int = ch(c) + 0x2814
-  def base(c: Int): Int = ch(c) + 0x2818
+  def tone(c: Int, t: Int, field: Int): Int = AodRegisterMap.tone(c, t, field)
+  def en(c: Int): Int = AodRegisterMap.channel(c)
+  def amp(c: Int): Int = en(c) + 8
+  def cfg(c: Int): Int = en(c) + 20
+  def base(c: Int): Int = en(c) + 24
 
   def registers(dut: TopDut): Unit = {
     val d = new TopDriver(dut.io); val io = dut.io; val clock = d.clock
-    val nt = 4
+    val nt = dut.p.tones
     def pat(c: Int, t: Int, f: Int): BigInt =
       (BigInt(0xc0 + c) << 24) | ((0x70 + t) << 16) | ((0xf0 + f) << 8) | 0x5a
-    d.expect(0, BigInt("54473031", 16))
-    d.expect(4, BigInt("0e200402", 16))
-    d.expect(0x1c, (6250 << 16) | (98 << 8) | 64)
-    d.expect(0x20, BigInt("1007ffff", 16))
-    for (c <- 0 until 2) d.expect(amp(c), 0)
+    for (c <- 0 until 2) assert(io.control.amp_scale(c).toInt == 0)
+    val begin = clock.cycles
     for (c <- 0 until 2; t <- 0 until nt; f <- 0 until 4) d.write(tone(c,t,f), pat(c,t,f))
-    for (c <- 0 until 2; t <- 0 until nt; f <- 0 until 4) d.expect(tone(c,t,f), pat(c,t,f))
-    for (a <- Seq(tone(0,nt,0), tone(0,63,0), tone(0,0,4), ch(0)+0x280c, 0))
-      d.write(a, BigInt("a5a5a5a5", 16), response = 2)
-    // The reference intentionally returns sentinels with OKAY for invalid reads.
-    d.expect(tone(0,nt,0), BigInt("dead0002",16))
-    d.expect(tone(0,nt,4), BigInt("dead0002",16))
-    d.expect(0x44, BigInt("dead0000",16))
-    d.expect(tone(0,0,0), pat(0,0,0))
-    for ((a,v) <- Seq(0xc -> 40, 0x10 -> 4, 0x2c -> 0x12345678, 0x28 -> ((2 << 10) | (0x1f << 3) | 6))) {
-      d.write(a,v); d.expect(a,v)
+    assert(clock.cycles - begin == 2 * nt * 4, "one runtime write per clock")
+    for (c <- 0 until 2; t <- 0 until nt) {
+      val i = c * nt + t
+      assert(io.control.a_word(i).toBigInt == pat(c,t,0))
+      assert(io.control.d_word(i).toBigInt == pat(c,t,1))
+      assert(io.control.phase0(i).toBigInt == pat(c,t,2))
+      assert(io.control.cal_a(i).toBigInt == (pat(c,t,3) & 65535))
+      assert(io.control.cal_b(i).toBigInt == (pat(c,t,3) >> 16))
     }
-    d.write(0x28, 5)
-    for (c <- 0 until 2) {
-      d.write(en(c), mask); d.expect(en(c), 15); d.expect(en(c)+4, 0)
-    }
+    for (a <- Seq(tone(0,nt,0), tone(0,63,0), tone(0,0,4), ch(0)+0x280c, 0, tone(0,0,0)+1, 0x28, 0x2c))
+      d.write(a, BigInt("a5a5a5a5", 16))
+    assert(io.control.a_word(0).toBigInt == pat(0,0,0), "unmapped writes must not alias valid registers")
+    for (c <- 0 until 2) d.write(en(c), mask)
+    assert(io.control.tone_en.toBigInt == ((BigInt(1) << (2 * nt)) - 1))
     d.write(0xc,8); d.write(0x10,16); clock.tick(8)
-    assert(d.read(0x14).testBit(25), "dec > ratio must be reported")
+    assert(io.status.dec_clamped.toBoolean)
     d.write(0x10,4); clock.tick(8)
-    assert(!d.read(0x14).testBit(25))
-    val fclk = d.read(0x24); clock.tick(200)
-    assert(d.read(0x24) > fclk, "fabric counter must advance")
+    assert(!io.status.dec_clamped.toBoolean)
+    val fclk = io.status.fclk_cnt.toBigInt; clock.tick(200)
+    assert(io.status.fclk_cnt.toBigInt > fclk)
     for (c <- 0 until 2) {
       for (t <- 0 until nt; (f,v) <- Seq(0 -> BigInt("00100000",16), 1 -> BigInt(0),
           2 -> BigInt(0), 3 -> BigInt("80008000",16))) d.write(tone(c,t,f),v)
       d.write(amp(c),2048)
     }
-    d.write(0xc,17); d.write(0x10,16); clock.tick(64)
-    val before = d.read(sw(0))
+    d.write(0xc,17); d.write(0x10,16)
+    assert(!io.config_ready.toBoolean); d.settled()
+    val before = io.status.sweep_cnt(0).toBigInt
+    val launchEdge = clock.cycles + 1
+    var firstValid = -1L
+    clock.after = () => {
+      if (firstValid < 0 && io.dac_valid.toBigInt != 0) firstValid = clock.cycles
+    }
     d.write(8,1); d.busy(); d.idle(); clock.tick(400)
-    d.expect(sw(0),before+1)
+    assert(firstValid - launchEdge == AodTop.idleLaunchLatency(dut.p))
+    clock.after = () => ()
+    for (c <- 0 until 2) assert(io.status.sweep_cnt(c).toBigInt == before+1)
     val phase = word(BigInt("00100000",16) * ((6250+15)/16) * 17)
-    assert(phase != 0)
-    for (c <- 0 until 2; t <- 0 until nt) d.expect(tone(c,t,4),phase)
-    clock.tick(64)
-    assert(io.dac_x.toBigInt == 0 && io.dac_y.toBigInt == 0, "pulsed sweep must become silent")
-    d.write(0x18,1); assert(!d.read(0x14).testBit(8))
+    assert(d.snapshotEvents.size == nt * 2, "one snapshot event per tone/axis")
+    for (c <- 0 until 2; t <- 0 until nt) assert(d.snapshots((c,t)) == phase)
+    assert(io.dac_x.toBigInt == 0 && io.dac_y.toBigInt == 0)
+    d.write(0x18,1); clock.tick()
+    assert(io.status.clip.toBigInt == 0)
     for (c <- 0 until 2) d.write(amp(c),65535)
-    clock.tick(64); d.write(8,1); d.busy(); d.idle()
-    assert(d.read(0x14).testBit(8), "coherent overdrive must clip")
-    d.expect(ch(0)+0x280c,2)
+    d.settled(); d.write(8,1); d.busy(); d.idle()
+    assert(io.status.clip.toBigInt == 3, "coherent overdrive must clip both axes")
     for (c <- 0 until 2) d.write(amp(c),256)
-    clock.tick(64); d.write(0x18,1); clock.tick(16)
-    assert(!d.read(0x14).testBit(8), "clip W1C")
+    d.settled(); d.write(0x18,1); clock.tick(16)
+    assert(io.status.clip.toBigInt == 0)
 
     d.write(8,0)
-    val triggers = d.read(0x30); val sweeps = d.read(sw(0))
+    val triggers = io.status.trig_cnt.toBigInt; val sweeps = io.status.sweep_cnt(0).toBigInt
     io.trig_in #= true; clock.tick(20); io.trig_in #= false; clock.tick(20)
-    d.expect(0x30,triggers); d.expect(sw(0),sweeps)
+    assert(io.status.trig_cnt.toBigInt == triggers && io.status.sweep_cnt(0).toBigInt == sweeps)
     d.write(8,8); clock.tick(20); io.trig_in #= true; clock.tick(20)
-    d.expect(0x30,triggers+1); d.busy(); d.idle(); clock.tick(400)
-    d.expect(sw(0),sweeps+1)
+    assert(io.status.trig_cnt.toBigInt == triggers+1)
+    d.busy(); d.idle(); clock.tick(400)
+    assert(io.status.sweep_cnt(0).toBigInt == sweeps+1)
     io.trig_in #= false; clock.tick(40)
-    val tc = d.read(0x30)
-    d.write(8,0x18); clock.tick(40); d.expect(0x30,tc)
+    val tc = io.status.trig_cnt.toBigInt
+    d.write(8,0x18); clock.tick(40)
+    assert(io.status.trig_cnt.toBigInt == tc)
     d.write(8,0)
 
     d.write(0x18,1)
-    val queued = d.read(sw(0))
+    val queued = io.status.sweep_cnt(0).toBigInt
     d.write(8,1); d.busy(); d.write(8,1)
-    d.poll("two queued sweeps complete")(d.read(sw(0)) == queued+2)
+    d.poll("two queued sweeps complete")(io.status.sweep_cnt(0).toBigInt == queued+2)
     d.idle(); clock.tick(400)
-    d.expect(sw(0),queued+2)
-    assert(!d.read(0x14).testBit(26), "one pending launch must be accepted")
+    assert(!io.status.go_dropped.toBoolean)
     d.write(0x18,1)
-    val over = d.read(sw(0))
+    val over = io.status.sweep_cnt(0).toBigInt
     d.write(8,1); d.busy(); d.write(8,1); d.write(8,1); clock.tick(40)
-    assert(d.read(0x14).testBit(26), "third outstanding launch must report go_drop")
-    d.poll("over-trigger sweeps complete")(d.read(sw(0)) == over+2)
-    d.idle(); clock.tick(400); d.expect(sw(0),over+2); d.write(0x18,1)
+    assert(io.status.go_dropped.toBoolean)
+    d.poll("over-trigger sweeps complete")(io.status.sweep_cnt(0).toBigInt == over+2)
+    d.idle(); clock.tick(400); d.write(0x18,1)
     for (c <- 0 until 2) d.write(amp(c),2048)
-    d.write(8,3); clock.tick(2000)
-    assert(io.dac_x.toBigInt != 0 || io.dac_y.toBigInt != 0, "soft-reset check must start from active output")
+    d.settled(); d.write(8,3); clock.tick(2000)
+    assert(io.dac_x.toBigInt != 0 || io.dac_y.toBigInt != 0)
     d.write(8,4); clock.tick(200)
-    assert(io.dac_x.toBigInt == 0 && io.dac_y.toBigInt == 0, "soft reset must silence both outputs")
+    assert(io.dac_x.toBigInt == 0 && io.dac_y.toBigInt == 0 && io.dac_valid.toBigInt == 0)
     d.write(8,0)
   }
 
@@ -153,16 +159,14 @@ object TopChecks {
     val d = new TopDriver(dut.io); val io = dut.io; val clock = d.clock
     def pattern(c: Int,e: Int): BigInt = (c << 12) | (0x100 + e)
     def wr(c: Int,e: Int,v: BigInt,sel: Int = 7): Unit = {
-      d.write(0x2c,v)
-      d.write(0x28,(c << 13) | ((e >> 7) << 12) | ((e & 127) << 3) | sel)
+      if (sel == 7) d.load(AodTable.gain, e, v, channel = c)
+      else if (sel == 5 || sel == 6) d.load(sel - 5, e & 63, v)
     }
     def table(c: Int,t: Int,e: Int): BigInt = { d.probe(c,t,e); io.probe_table.toBigInt }
     for (e <- 0 until 256; c <- 0 until 2; t <- 0 until 2) {
       val got = table(c,t,e)
       assert(got == 32768, s"reset unity ch=$c tone=$t entry=$e got=$got")
     }
-    val info = d.read(0x34)
-    assert((info & 255) == 8 && ((info >> 8) & 255) == 17, "GCAL_INFO depth and exact ratio")
     for (c <- 0 until 2) {
       for (e <- 0 until 256) wr(c,e,pattern(c,e))
       clock.tick(8)
@@ -172,7 +176,7 @@ object TopChecks {
       }
     }
     val before = table(0,0,37)
-    for (sel <- 0 until 7) {
+    for (sel <- Seq(5, 6)) {
       wr(0,37,BigInt("deadbeef",16),sel); clock.tick(8)
       assert(table(0,0,37) == before, s"selector $sel must not write gcal")
     }
@@ -194,7 +198,9 @@ object TopChecks {
     }
     clock.tick(16)
     for (c <- 0 until 2) {
-      d.expect(base(c),bases(c)); d.expect(cfg(c),if (c == 0) 7 else 2)
+      assert(io.control.gcal_base(c).toBigInt == bases(c))
+      assert(io.control.gcal_zoom(c).toInt == (if (c == 0) 3 else 1))
+      assert(io.control.gcal_en.toBigInt.testBit(c) == (c == 0))
       d.probe(ch=c)
       assert(io.probe_base.toBigInt == bases(c))
       assert(io.probe_zoom.toInt == (if (c == 0) 3 else 1))

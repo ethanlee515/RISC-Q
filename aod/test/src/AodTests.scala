@@ -23,7 +23,10 @@ object AodTests extends TestSuite {
     test("indices") { tone.doSim("indices", seed = 42)(ToneChecks.indices) }
     test("cw") { tone.doSim("cw", seed = 42)(ToneChecks.cw) }
     test("registers") { top4.doSim("registers", seed = 42)(TopChecks.registers) }
-    test("gcalAxi") { top2.doSim("gcalAxi", seed = 42)(TopChecks.gcal) }
+    test("gcalSetup") { top2.doSim("gcalSetup", seed = 42)(TopChecks.gcal) }
+    test("coefficientLoading") { top2.doSim("coefficientLoading", seed = 42)(SetupChecks.loading) }
+    test("profilesThroughSetup") { top2.doSim("profilesThroughSetup", seed = 42)(SetupChecks.playback) }
+    test("registerGeometry") { SetupChecks.registerGeometry() }
     test("gcalGenerated128") { CalibrationChecks.generated(128) }
     test("gcalGenerated256") { CalibrationChecks.generated(256) }
     test("spectrumCw") { SpectralChecks.cw(spectrumLinear) }

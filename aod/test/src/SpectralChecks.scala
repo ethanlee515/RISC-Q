@@ -42,8 +42,15 @@ object SpectralChecks {
       d.write(0xc, if (chirp) 16 else 512)
       d.write(0x10, if (chirp) 16 else 1)
       clock.tick(128)
+      val launchEdge = clock.cycles + 1
+      var firstValid = -1L
+      clock.after = () => {
+        if (firstValid < 0 && io.dac_valid.toBigInt != 0) firstValid = clock.cycles
+      }
       d.write(8, if (chirp) 3 else 1)
       clock.tick(64)
+      assert(firstValid - launchEdge == AodTop.idleLaunchLatency(dut.p))
+      clock.after = () => ()
       clock.until("nonzero converter output", 1000)(io.dac_x.toBigInt != 0)
       clock.tick(256)
 
@@ -56,7 +63,7 @@ object SpectralChecks {
           clock.tick()
         }
       } finally writer.close()
-      assert(!d.read(0x14).testBit(8), s"${shot.name}: spectral capture must not clip")
+      assert(!io.status.clip.toBigInt.testBit(0), s"${shot.name}: spectral capture must not clip")
     }
     dump
   }

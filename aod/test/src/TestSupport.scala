@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets.UTF_8
 import scala.collection.JavaConverters._
 import spinal.core._
 import spinal.core.sim._
+import spinal.lib._
 
 /** Local fixtures, simulator configuration, and clock driver. */
 object TestSupport {
@@ -131,44 +132,47 @@ class ToneDut extends Component {
   io.probe_end := dut.logic.mv_end.pull()
 }
 
-class TopPorts extends Bundle {
+class TopPorts(p: AodConfig) extends Bundle {
   val clk, rst, trig_in = in Bool()
-  val s_axi_awaddr, s_axi_araddr = in UInt(16 bits)
-  val s_axi_awprot, s_axi_arprot = in Bits(3 bits)
-  val s_axi_awvalid, s_axi_wvalid, s_axi_bready, s_axi_arvalid, s_axi_rready = in Bool()
-  val s_axi_wdata = in Bits(32 bits)
-  val s_axi_wstrb = in Bits(4 bits)
-  val s_axi_awready, s_axi_wready, s_axi_bvalid, s_axi_arready, s_axi_rvalid = out Bool()
-  val s_axi_bresp, s_axi_rresp = out Bits(2 bits)
-  val s_axi_rdata, dac_x, dac_y = out Bits(32 bits)
+  val cmd = slave(Flow(AodWrite()))
+  val setup = slave(Stream(AodCoefficientWrite()))
+  val setup_busy, config_ready = out Bool()
+  val status = out(new AodStatus(p))
+  val control = out(new AodControl(p)) // test-only observation, not a production read bus
+  val dac_valid = out Bits(p.channels bits)
+  val dac_x, dac_y = out Bits(32 bits)
   val probe_ch = in Bool()
   val probe_tone = in UInt(6 bits)
+  val probe_beat = in UInt(2 bits)
   val probe_addr = in UInt(8 bits)
   val probe_table, probe_urom, probe_srom, probe_base = out UInt(32 bits)
   val probe_zoom = out UInt(2 bits)
   val probe_enable = out Bool()
   val probe_index = out UInt(8 bits)
   val probe_gain, probe_ce_gain = out UInt(16 bits)
+  val probe_phase, probe_inc = out UInt(32 bits)
 }
 class TopDut(nt: Int, roms: Path, nch: Int = 2) extends Component {
-  val io = new TopPorts
   val p = AodConfig(roms / "aod_unit.mem", roms / "aod_seed.mem", tones = nt, channels = nch)
+  val io = new TopPorts(p)
   val dut = new AodTop(p)
-  for ((name, port) <- dut.io.axi.elements) {
-    val external = io.elements.toMap.apply(name)
-    if (port.isInput) port.assignFromBits(external.asBits) else external.assignFromBits(port.asBits)
-  }
   dut.io.clk := io.clk; dut.io.rst := io.rst; dut.io.trig_in := io.trig_in
+  dut.io.cmd << io.cmd; dut.io.setup << io.setup
+  io.setup_busy := dut.io.setup_busy; io.config_ready := dut.io.config_ready
+  io.status := dut.io.status; io.control := dut.regs.io.control.pull()
+  io.dac_valid := dut.io.dac_valid
   io.dac_x := dut.io.dac_x; io.dac_y := dut.io.dac_y
-  val banks = dut.logic.banks
+  val banks = dut.engine.logic.banks
   val selected = (io.probe_ch.asUInt.resize(7) * U(nt, 7 bits) + io.probe_tone.resize(14)).resize(log2Up(nt * nch))
   def select[T <: Data](values: Seq[T]): T = Vec(values)(selected)
   io.probe_table := select(banks.flatMap(_.logic.tones).map(t => t.logic.gcal.rework { t.logic.gcal.logic.tab.readAsync(io.probe_addr.pull().resized).asUInt }.pull()))
-  io.probe_urom := select(banks.flatMap(_.logic.tones).map(t => t.rework { t.logic.urom.head.readAsync(io.probe_addr.pull().resize(6)).asUInt }.pull()))
-  io.probe_srom := select(banks.flatMap(_.logic.tones).map(t => t.rework { t.logic.srom.head.readAsync(io.probe_addr.pull().resize(6)).asUInt }.pull()))
+  io.probe_urom := select(banks.flatMap(_.logic.tones).map(t => t.rework { Vec(t.logic.urom.map(_.readAsync(io.probe_addr.pull().resize(log2Up(p.segments)))).map(_.resize(32)))(io.probe_beat.pull()).asUInt }.pull()))
+  io.probe_srom := select(banks.flatMap(_.logic.tones).map(t => t.rework { Vec(t.logic.srom.map(_.readAsync(io.probe_addr.pull().resize(log2Up(p.segments)))).map(_.resize(32)))(io.probe_beat.pull()).asUInt }.pull()))
   io.probe_index := select(banks.flatMap(_.logic.tones).map(_.logic.gcal.logic.idx_q.pull())).resized
   io.probe_gain := select(banks.flatMap(_.logic.tones).map(_.logic.gcal.logic.g.pull()))
   io.probe_ce_gain := select(banks.flatMap(_.logic.tones).map(_.logic.gcal.logic.ce_g.pull()))
+  io.probe_phase := select(banks.flatMap(_.logic.tones).map(_.logic.phi.pull()))
+  io.probe_inc := select(banks.flatMap(_.logic.tones).map(_.logic.inc.pull()))
   val ch = io.probe_ch.asUInt.resize(log2Up(nch))
   io.probe_base := Vec(banks.map(_.logic.gb_q.pull()))(ch)
   io.probe_zoom := Vec(banks.map(_.logic.gz_q.pull()))(ch)
