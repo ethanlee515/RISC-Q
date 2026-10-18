@@ -1,0 +1,89 @@
+{
+  "kind": "aod",
+  "version": 1,
+  "name": "aod-soc",
+  "mem_depth": 4096,
+  "with_mul": false,
+  "queue_depth": 2,
+  "link_pipe": 4,
+  "diagnostics": true,
+  "dsp_hz": 400000000,
+  "tones": 2,
+  "axes": 2,
+  "segments": 64,
+  "gain_entries": 256,
+  "move_steps": 48,
+  "ratio_min": 7,
+  "ratio_max": 64,
+  "dec_max": 16,
+  "minimum_enqueue_lead": 75,
+  "lead_time": 72,
+  "host": {
+    "program": 0,
+    "control": 1048576,
+    "setup": 2097152,
+    "cpu_reset": 0,
+    "stopped": 4,
+    "done": 80,
+    "host_base_lo": 72,
+    "host_base_hi": 76
+  },
+  "setup": {
+    "capabilities": 0,
+    "reset": 4,
+    "state": 8,
+    "diagnostics": 12,
+    "trajectory": 4096,
+    "envelope": 8192,
+    "gain": 12288
+  },
+  "cpu": {
+    "aod": 65536,
+    "host_window": 1073741824,
+    "time": 49144,
+    "time_cmp": 16384,
+    "wait_time_cmp": 16392,
+    "done": 16400
+  },
+  "registers": {
+    "fire": 0,
+    "start": 16640,
+    "ratio": 12,
+    "decimation": 16,
+    "clear_sticky": 24,
+    "tone": [
+      [
+        [
+          32768,
+          34816,
+          36864,
+          38912
+        ],
+        [
+          32772,
+          34820,
+          36868,
+          38916
+        ]
+      ],
+      [
+        [
+          49152,
+          51200,
+          53248,
+          55296
+        ],
+        [
+          49156,
+          51204,
+          53252,
+          55300
+        ]
+      ]
+    ],
+    "channel": [
+      43008,
+      59392
+    ]
+  }
+}

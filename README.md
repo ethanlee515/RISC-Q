@@ -3,6 +3,11 @@
 A RISC-V–controlled SoC for superconducting-qubit control, written in [SpinalHDL](https://github.com/SpinalHDL/SpinalHDL)
 and targeting the AMD/Xilinx **ZCU216** RFSoC board (`xczu49dr-ffvf1760-2-e`).
 
+[AodSoc](docs/soc/AodSoc.md) adds a separate RISC-V-controlled acousto-optic
+movement SoC with host coefficient setup and timed paired X/Y output. Its native
+complex-output control path is simulated; AOD RFDC/board integration is pending.
+The board flow below remains the superconducting build.
+
 Each qubit gets its own small in-order RV32I control core (optional Zmmul). The core runs the
 control program and schedules pulses ahead of time. Converter-edge DSP modules generate the
 DAC waveforms and decode the ADC readout cycle-exactly, and a narrow posted link connects each

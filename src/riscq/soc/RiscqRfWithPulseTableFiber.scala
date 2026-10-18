@@ -279,29 +279,6 @@ object RiscqRfWithPulseTableFiber {
    *  bus `dn`, resizing the per-top-varying fields (source/address/size) — `dn`'s widths are a superset
    *  of `up`'s, so the A-channel resizes up and the D-channel response resizes back down (the upper
    *  source/size bits round-trip as zero). Both are simple put/get buses (data, no BCE). */
-  def bridgeLoad(dn: spinal.lib.bus.tilelink.Bus, up: spinal.lib.bus.tilelink.Bus): Unit = {
-    // A channel: master `up` → slave `dn`
-    dn.a.valid   := up.a.valid
-    up.a.ready   := dn.a.ready
-    dn.a.opcode  := up.a.opcode
-    dn.a.param   := up.a.param
-    dn.a.source  := up.a.source.resized
-    dn.a.address := up.a.address.resized
-    dn.a.size    := up.a.size.resized
-    dn.a.mask    := up.a.mask
-    dn.a.data    := up.a.data
-    dn.a.corrupt := up.a.corrupt
-    dn.a.debugId := up.a.debugId
-    // D channel: slave `dn` → master `up`
-    up.d.valid   := dn.d.valid
-    dn.d.ready   := up.d.ready
-    up.d.opcode  := dn.d.opcode
-    up.d.param   := dn.d.param
-    up.d.source  := dn.d.source.resized
-    up.d.size    := dn.d.size.resized
-    up.d.denied  := dn.d.denied
-    up.d.data    := dn.d.data
-    up.d.corrupt := dn.d.corrupt
-    if (up.p.sinkWidth > 0) up.d.sink := dn.d.sink.resized
-  }
+  def bridgeLoad(dn: spinal.lib.bus.tilelink.Bus, up: spinal.lib.bus.tilelink.Bus): Unit =
+    riscq.soc.fabric.TilelinkPortBridge.bridgeLoad(dn, up)
 }

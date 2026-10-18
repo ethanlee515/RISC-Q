@@ -9,8 +9,25 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Protocol
 
-from riscq.map import MEM_BASE, SocMap
+from riscq.map import MEM_BASE
+
+
+class BuildParams(Protocol):
+    @property
+    def with_mul(self) -> bool: ...
+
+
+class BuildMap(Protocol):
+    """The compiler needs RAM/ISA/startup layout, independent of peripheral kind."""
+    @property
+    def params(self) -> BuildParams: ...
+    @property
+    def mem_bytes(self) -> int: ...
+    def gen_header(self, core: int = 0) -> str: ...
+    def gen_linker(self) -> str: ...
+
 
 # resolved from PATH; the toolchain ships no rv32 runtime archive, so fw/muldiv.c provides the
 # soft mul/div libcalls instead of -lgcc
@@ -86,7 +103,7 @@ class Program:
         return self.image.symbols[name][1]
 
 
-def _flags(soc_map: SocMap) -> list[str]:
+def _flags(soc_map: BuildMap) -> list[str]:
     march = "rv32i_zmmul" if soc_map.params.with_mul else "rv32i"
     return [f"-march={march}", "-mabi=ilp32", "-O2", "-fwrapv", "-nostdlib",
             "-ffreestanding", "-mno-relax", "-Werror=implicit-function-declaration", "-I."]
@@ -105,10 +122,10 @@ def _parse_nm(text: str) -> dict[str, tuple[int, int]]:
     return symbols
 
 
-def compile_c(c_source: str, soc_map: SocMap, extra_headers: dict[str, str] | None = None,
+def compile_c(c_source: str, soc_map: BuildMap, extra_headers: dict[str, str] | None = None,
               core: int = 0) -> Image:
     """Compile a C program (its whole main.c text) against this build's fw/ runtime, for the
-    channel geometry of `core` (its generated riscq_map.h). The header text is part of the
+    peripheral map of `core` (its generated riscq_map.h). The header text is part of the
     build-cache key, so cores with the same channel list share one compile.
     Loud failures: missing toolchain, compile/link errors (RAM overflow is a link error),
     oversize image."""

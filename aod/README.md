@@ -17,6 +17,12 @@ acknowledges coefficient writes after destination-memory completion, and supplie
 an AOD reset/flush command plus minimal optional diagnostic readback. See
 [HOST.md](HOST.md) for its map, reset/loading sequence and resource options.
 
+The main RISC-Q module also provides [AodSoc](../docs/soc/AodSoc.md): one
+RISC-V CPU with host program/setup windows, posted AOD writes, shared time,
+result forwarding, and a CPU-in-the-loop regression. Its outputs are still native
+complex samples; board RFDC conversion and implementation timing remain separate.
+The standalone module and tests below do not require a SoC/firmware build.
+
 From the RISC-Q checkout, run:
 
 ```bash

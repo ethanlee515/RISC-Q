@@ -12,7 +12,7 @@ object `package` extends ScalaModule {
   def moduleRefs = moduleInfo._1
   def modulePluginOptions = moduleInfo._2()
 
-  override def moduleDeps = Seq(moduleRefs("core"), moduleRefs("lib"), moduleRefs("idslplugin"), moduleRefs("sim"), timing)
+  override def moduleDeps = Seq(moduleRefs("core"), moduleRefs("lib"), moduleRefs("idslplugin"), moduleRefs("sim"), timing, aod)
 
   override def scalacOptions = super.scalacOptions() ++ modulePluginOptions()
 

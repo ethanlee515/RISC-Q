@@ -3,8 +3,10 @@
 `AodHostAdapter` connects a 32-bit TileLink host window to `AodTop.setup` across
 independent host/DSP clocks. RISC-Q already bridges the board's host AXI bus to
 TileLink; this adapter belongs downstream of that bridge. It does not introduce
-another waveform top or modify the runtime posted-write interface. Global SoC
-address allocation, CPU/link wiring and a host software driver remain next steps.
+another waveform top or modify the runtime posted-write interface. The
+[AodSoc shell](../docs/soc/AodSoc.md) now supplies the global address allocation,
+CPU/link wiring and host software helpers. This page describes the standalone
+adapter's relative interface.
 
 The adapter uses Spinal's `tilelink.FifoCc` for requests and responses. Address,
 payload and transaction identity cross together. Reads capture their entire

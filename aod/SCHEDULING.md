@@ -92,8 +92,9 @@ different engine contract and are deferred.
 The default FIFO budget is **four pending jobs**, configurable by `queueDepth`,
 plus one dispatched active job. The head pipeline counts toward that budget.
 `cmd` is a posted `Flow`, so there is no backpressure on runtime stores. Software
-must pace writes to respect capacity and lead time. Later RISC-Q firmware can
-reuse `wait_until` (the time-comparator write followed by a blocking read); no
+must pace writes to respect capacity and lead time. The integrated
+[AodSoc firmware](../docs/soc/AodSoc.md) reuses `wait_until`
+(the time-comparator write followed by a blocking read); no
 new wait instruction is needed. Reusing superconducting pulse-train cadence
 constants without measuring the AOD path is unsupported.
 
