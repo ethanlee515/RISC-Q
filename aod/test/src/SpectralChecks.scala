@@ -5,11 +5,11 @@ import java.nio.file.{Files, Path}
 import spinal.core.sim._
 
 object SpectralChecks {
-  import Reference._
+  import TestSupport._
   private val sampleCount = 65536
   private val fsMHz = 400.0
   private val tones = 8
-  private val dest = testRoot / "simWorkspace" / "spectrum"
+  private val dest = workspace / "spectrum"
 
   private case class Shot(name: String, mode: String, bb: Double, bb2: Double, count: Int = 1)
 
@@ -62,7 +62,7 @@ object SpectralChecks {
   }
 
   private def check(dump: Path, mode: String, extra: Seq[String] = Seq.empty): String = {
-    val log = PythonChecks.run(root / "scripts" / "tg_spectrum.py",
+    val log = PythonChecks.run(tools / "tg_spectrum.py",
       Seq(dump.toString, "--check", mode) ++ extra,
       dest / s"${dump.getFileName.toString.stripSuffix(".txt")}-$mode.log")
     assert(log.contains("RESULT: PASS"), s"Missing spectral verdict:\n$log")

@@ -3,7 +3,7 @@ package riscq.aod
 import spinal.core.sim._
 
 object NumericalChecks {
-  import Reference._
+  import TestSupport._
   def cordic(dut: CordicDut): Unit = {
     val io = dut.io
     val clock = new Clock(io.clk)

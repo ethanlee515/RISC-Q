@@ -4,7 +4,7 @@ import spinal.core.sim._
 
 /** AXI driver deliberately holds requests through an observed handshake edge. */
 class TopDriver(val io: TopPorts) {
-  import Reference._
+  import TestSupport._
   val clock = new Clock(io.clk)
   io.rst #= true; io.trig_in #= false
   io.s_axi_awaddr #= 0; io.s_axi_awprot #= 0; io.s_axi_awvalid #= false
@@ -52,7 +52,7 @@ class TopDriver(val io: TopPorts) {
 }
 
 object TopChecks {
-  import Reference._
+  import TestSupport._
   def ch(c: Int): Int = 0x8000 + c * 0x4000
   def tone(c: Int, t: Int, field: Int): Int = ch(c) + field * 0x800 + t * 4
   def en(c: Int): Int = ch(c) + 0x2800

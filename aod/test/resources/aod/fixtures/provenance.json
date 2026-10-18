@@ -1,0 +1,57 @@
+{
+  "source_revision": "1defd33dd6f1a25d932ecf4b7ba5ea4fff72c476",
+  "files": {
+    "resources/aod/profiles/minjerk/aod_unit.mem": {
+      "source": "rearrange/roms_norm_400/aod_unit.mem",
+      "source_sha256": "b63f76f9bd5ae0ced9eb418e2c88d829c7bf7ecbc40c1384d8dcc9bd00ebb240"
+    },
+    "resources/aod/profiles/minjerk/aod_seed.mem": {
+      "source": "rearrange/roms_norm_400/aod_seed.mem",
+      "source_sha256": "3829a154402a6a08c4870ee41ac96cec4438cfd946a097719731239a6df91ab0"
+    },
+    "test/resources/aod/fixtures/aod_tone1_exp.mem": {
+      "source": "rearrange/roms_norm_400/aod_tone1_exp.mem",
+      "source_sha256": "b6f93367731f0875b4128abbaf1ee8f1ff2a14600a4ea349a2bc6ed29db18cda"
+    },
+    "test/resources/aod/fixtures/example_sweep.txt": {
+      "source": "examples/example_sweep.txt",
+      "source_sha256": "5d29269b5698237badbac52082858353e538b635055abff6f89f71924166f734"
+    },
+    "test/resources/aod/tools/gen_tg_profile.py": {
+      "source": "scripts/gen_tg_profile.py",
+      "source_sha256": "4bb79aa45beb77712077d4fdc8cadff751894c16c1ad161f704471f3151f23f5",
+      "adaptations": [
+        "Require an explicit coefficient source directory.",
+        "Remove copying of the legacy Verilog configuration header.",
+        "Refer endpoint-index diagnostics to the Scala regression."
+      ]
+    },
+    "test/resources/aod/tools/gen_gcal_table.py": {
+      "source": "scripts/gen_gcal_table.py",
+      "source_sha256": "3f1a2523aab46e4d1d6eb094fbb0d2364177edb8e3d90fc8dc70173d00b5bdb2"
+    },
+    "test/resources/aod/tools/tg_spectrum.py": {
+      "source": "scripts/tg_spectrum.py",
+      "source_sha256": "fc60589db09e9c032a138896f478b6a745d05741068f3bd92ff4aaf9492d3cf1"
+    },
+    "test/resources/aod/tools/check_gcal_real.py": {
+      "source": "rearrange/tb/check_gcal_real.py",
+      "source_sha256": "5867443bf1d0ee9e7f25598d7be328b3c2012a86837bed4aa268ce1c53a866c4"
+    },
+    "test/resources/aod/fixtures/geometry.properties": {
+      "source": "rearrange/roms_norm_400/aod_tone1_cfg.vh",
+      "source_sha256": "165d22afafd7d9810e4986af01aeba1afc3c745c957cad1fb3bdbf6d9b3e03eb",
+      "adaptations": [
+        "Preserve integer parameters as Java properties; omit Verilog declarations and unused angle table."
+      ]
+    }
+  },
+  "runtime_profile_trace": {
+    "fixture": "test/resources/aod/fixtures/runtime-profile.properties",
+    "seed": 2703,
+    "clocks": 54070,
+    "sha256": "10941599845c1e145997686f3d230f92aba4d6d157c6711bff7afa862823df68",
+    "capture": "AodPortTests.runtimeProfiles, before removal of live SV comparison bindings.",
+    "log": "out/aod-standalone-trace-baseline.log"
+  }
+}

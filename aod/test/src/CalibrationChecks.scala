@@ -5,15 +5,15 @@ import java.nio.file.Files
 import spinal.core.sim._
 
 object CalibrationChecks {
-  import Reference._
+  import TestSupport._
 
   /** tb_aod_gcal_real's table-load/sweep, using the shipped synthetic curve. */
   def generated(tabn: Int): Unit = {
-    val dir = testRoot / "simWorkspace" / "calibration" / s"entries$tabn"
+    val dir = workspace / "calibration" / s"entries$tabn"
     Files.createDirectories(dir)
     val table = dir / "gcal.mem"
-    PythonChecks.run(root / "scripts" / "gen_gcal_table.py",
-      Seq("--sweep", (root / "examples" / "example_sweep.txt").toString,
+    PythonChecks.run(tools / "gen_gcal_table.py",
+      Seq("--sweep", (fixtures / "example_sweep.txt").toString,
         "--out", table.toString, "--entries", tabn.toString, "--nco", "96"),
       dir / "generate.log")
     val metadata = read(dir / "gcal.json")
@@ -57,7 +57,7 @@ object CalibrationChecks {
         }
       } finally writer.close()
     }
-    val log = PythonChecks.run(root / "rearrange" / "tb" / "check_gcal_real.py",
+    val log = PythonChecks.run(tools / "check_gcal_real.py",
       Seq(dump.toString, table.toString, "--zoom", zoom.toString), dir / "compare.log")
     assert(log.contains(s"${offsets.size} sweep points") && log.contains("RESULT: PASS"),
       s"Calibration checker did not confirm the complete sweep:\n$log")

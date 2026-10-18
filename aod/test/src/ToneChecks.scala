@@ -4,11 +4,11 @@ import spinal.core.sim._
 import scala.collection.mutable.ArrayBuffer
 
 object ToneChecks {
-  import Reference._
+  import TestSupport._
   def pulsed(dut: ToneDut): Unit = {
     val d = new ToneDriver(dut.io)
     val io = dut.io; val clock = d.clock
-    val expected = lines(golden / "aod_tone1_exp.mem")
+    val expected = lines(fixtures / "aod_tone1_exp.mem")
       .filter(_.trim.nonEmpty).map { line =>
         val raw = Integer.parseInt(line.trim, 16)
         if (raw >= 32768) raw - 65536 else raw

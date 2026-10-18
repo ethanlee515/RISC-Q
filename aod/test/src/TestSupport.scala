@@ -6,41 +6,32 @@ import scala.collection.JavaConverters._
 import spinal.core._
 import spinal.core.sim._
 
-/** Test-only bindings to the sibling checkout. No AOD RTL is copied or changed. */
-object Reference {
+/** Local fixtures, simulator configuration, and clock driver. */
+object TestSupport {
   implicit class PathOps(val path: Path) extends AnyVal {
     def /(child: String): Path = path.resolve(child)
   }
   def read(path: Path): String = new String(Files.readAllBytes(path), UTF_8)
   def lines(path: Path): Vector[String] = Files.readAllLines(path, UTF_8).asScala.toVector
-
-  val root = Paths.get(sys.env("AOD_REFERENCE_ROOT"))
-  val testRoot = Paths.get(sys.env("AOD_TEST_ROOT"))
-  val rtl = root / "rearrange" / "rtl"
-  val golden = root / "rearrange" / "roms_norm_400"
-  val allRtl = Seq("aod_tg_top.sv", "aod_tg_regs.sv", "aod_tg_bank.sv",
-    "aod_tg_tone1.sv", "aod_gcal.sv", "aod_tg_round.sv", "cordicg3.sv", "reg_delay1.v")
+  def resource(name: String): Path = {
+    val url = Option(getClass.getResource("/aod/" + name))
+      .getOrElse(throw new IllegalArgumentException(s"Missing AOD test resource: $name"))
+    Paths.get(url.toURI)
+  }
+  val fixtures = resource("fixtures/geometry.properties").getParent
+  val tools = resource("tools/gen_tg_profile.py").getParent
+  val profiles = AodProfiles.minjerk
+  // Mill forks test suites concurrently: isolate builds and generated fixtures.
+  val workspace = {
+    val base = Paths.get("aod", "simWorkspace").toAbsolutePath
+    Files.createDirectories(base)
+    Files.createTempDirectory(base, "run-")
+  }
   val mask: BigInt = (BigInt(1) << 32) - 1
   def word(v: BigInt): BigInt = v & mask
-  // The standalone --binary runner starts otherwise-uninitialized registers at
-  // zero. SpinalSim normally randomizes them, including unreset write-enable
-  // distribution registers that can corrupt initialized tables during reset.
+  // Match the established startup contract for unreset arithmetic/distribution registers.
   def config = SimConfig.withVerilator.addSimulatorFlag("-Wno-fatal")
-    .addSimulatorFlag("--x-initial 0")
-    .workspacePath((testRoot / "simWorkspace").toString)
-
-  def bind(box: BlackBox, name: String, files: Seq[String]): Unit = {
-    box.setDefinitionName(name)
-    box.noIoPrefix()
-    files.foreach(f => box.addRTLPath((rtl / f).toString))
-  }
-  def memories(box: BlackBox, dir: Path): Unit = {
-    for (file <- Seq("aod_unit.mem", "aod_seed.mem")) {
-      require(Files.isRegularFile(dir / file), s"Missing reference memory: ${dir / file}")
-    }
-    box.addGeneric("UNIT_FILE", (dir / "aod_unit.mem").toString)
-    box.addGeneric("SEED_FILE", (dir / "aod_seed.mem").toString)
-  }
+    .addSimulatorFlag("--x-initial 0").workspacePath(workspace.toString)
 
   /** Drive only with clk low, sample after the rising edge has settled. */
   class Clock(clk: Bool) {
@@ -66,7 +57,7 @@ object Reference {
   }
 }
 
-import Reference._
+import TestSupport._
 
 class CordicPorts extends Bundle {
   val clk = in Bool()
@@ -77,16 +68,16 @@ class CordicPorts extends Bundle {
   val phaseout = out UInt(23 bits)
   val error, gout = out Bool()
 }
-class CordicBox extends BlackBox {
-  val io = new CordicPorts
-  Reference.bind(this, "cordicg", Seq("cordicg3.sv", "reg_delay1.v"))
-  Seq("OPIN" -> 0, "WIDTH" -> 20, "NSTAGE" -> 22, "NORMALIZE" -> 0,
-    "BUFIN" -> 1, "GW" -> 1).foreach { case (k, v) => addGeneric(k, v) }
-}
 class CordicDut extends Component {
   val io = new CordicPorts
-  val ref = new CordicBox
-  io <> ref.io
+  val dut = new AodCordic
+  io.elements.foreach { case (name, port) =>
+    val target = dut.io.elements.toMap.apply(name)
+    if (name == "gin") dut.io.gin := io.gin.asBits
+    else if (name == "gout") io.gout := dut.io.gout(0)
+    else if (port.isInput) target.assignFromBits(port.asBits)
+    else port.assignFromBits(target.asBits)
+  }
 }
 
 class GcalPorts(tabn: Int, halves: Int) extends Bundle {
@@ -98,17 +89,13 @@ class GcalPorts(tabn: Int, halves: Int) extends Bundle {
   val cal_now = in UInt(16 bits)
   val cal_eff = out UInt(16 bits)
 }
-class GcalBox(tabn: Int, halves: Int) extends BlackBox {
-  val io = new GcalPorts(tabn, halves)
-  Reference.bind(this, "aod_gcal", Seq("aod_gcal.sv"))
-  Seq("ACC" -> 32, "CALW" -> 16, "CAL_FRAC" -> 15, "TABN" -> tabn,
-    "IDXW" -> log2Up(tabn), "FRACW" -> 8, "HALVES" -> halves)
-    .foreach { case (k, v) => addGeneric(k, v) }
-}
 class GcalDut(tabn: Int, halves: Int) extends Component {
   val io = new GcalPorts(tabn, halves)
-  val ref = new GcalBox(tabn, halves)
-  io <> ref.io
+  val dut = new AodGcal(tabn, halves)
+  dut.io.elements.foreach { case (name, port) =>
+    val external = io.elements.toMap.apply(name)
+    if (port.isInput) port.assignFromBits(external.asBits) else external.assignFromBits(port.asBits)
+  }
 }
 
 class TonePorts extends Bundle {
@@ -129,16 +116,19 @@ class TonePorts extends Bundle {
   val probe_inc, probe_phi = out UInt(32 bits)
   val probe_osc, probe_run, probe_end = out Bool()
 }
-class ToneBox extends BlackBox {
-  val io = new TonePorts
-  Reference.bind(this, "aod_tone_probe", Reference.allRtl)
-  addRTLPath((Reference.testRoot / "rtl" / "aod_tone_probe.sv").toString)
-  Reference.memories(this, Reference.golden)
-}
 class ToneDut extends Component {
   val io = new TonePorts
-  val ref = new ToneBox
-  io <> ref.io
+  val p = AodConfig(profiles / "aod_unit.mem", profiles / "aod_seed.mem", ratioMax = 512)
+  val dut = new AodTone(p)
+  dut.io.elements.foreach { case (name, port) =>
+    val external = io.elements.toMap.apply(name)
+    if (port.isInput) port.assignFromBits(external.asBits) else external.assignFromBits(port.asBits)
+  }
+  io.probe_inc := dut.logic.inc_live.pull()
+  io.probe_phi := dut.logic.phi.pull()
+  io.probe_osc := dut.logic.osc.pull()
+  io.probe_run := dut.logic.run.pull()
+  io.probe_end := dut.logic.mv_end.pull()
 }
 
 class TopPorts extends Bundle {
@@ -160,22 +150,33 @@ class TopPorts extends Bundle {
   val probe_index = out UInt(8 bits)
   val probe_gain, probe_ce_gain = out UInt(16 bits)
 }
-class TopBox(nt: Int, roms: Path, nch: Int = 2) extends BlackBox {
-  val io = new TopPorts
-  Reference.bind(this, "aod_top_probe", Reference.allRtl)
-  addRTLPath((Reference.testRoot / "rtl" / "aod_top_probe.sv").toString)
-  addGeneric("NT", nt)
-  addGeneric("NCH", nch)
-  Reference.memories(this, roms)
-}
 class TopDut(nt: Int, roms: Path, nch: Int = 2) extends Component {
   val io = new TopPorts
-  val ref = new TopBox(nt, roms, nch)
-  io <> ref.io
+  val p = AodConfig(roms / "aod_unit.mem", roms / "aod_seed.mem", tones = nt, channels = nch)
+  val dut = new AodTop(p)
+  for ((name, port) <- dut.io.axi.elements) {
+    val external = io.elements.toMap.apply(name)
+    if (port.isInput) port.assignFromBits(external.asBits) else external.assignFromBits(port.asBits)
+  }
+  dut.io.clk := io.clk; dut.io.rst := io.rst; dut.io.trig_in := io.trig_in
+  io.dac_x := dut.io.dac_x; io.dac_y := dut.io.dac_y
+  val banks = dut.logic.banks
+  val selected = (io.probe_ch.asUInt.resize(7) * U(nt, 7 bits) + io.probe_tone.resize(14)).resize(log2Up(nt * nch))
+  def select[T <: Data](values: Seq[T]): T = Vec(values)(selected)
+  io.probe_table := select(banks.flatMap(_.logic.tones).map(t => t.logic.gcal.rework { t.logic.gcal.logic.tab.readAsync(io.probe_addr.pull().resized).asUInt }.pull()))
+  io.probe_urom := select(banks.flatMap(_.logic.tones).map(t => t.rework { t.logic.urom.head.readAsync(io.probe_addr.pull().resize(6)).asUInt }.pull()))
+  io.probe_srom := select(banks.flatMap(_.logic.tones).map(t => t.rework { t.logic.srom.head.readAsync(io.probe_addr.pull().resize(6)).asUInt }.pull()))
+  io.probe_index := select(banks.flatMap(_.logic.tones).map(_.logic.gcal.logic.idx_q.pull())).resized
+  io.probe_gain := select(banks.flatMap(_.logic.tones).map(_.logic.gcal.logic.g.pull()))
+  io.probe_ce_gain := select(banks.flatMap(_.logic.tones).map(_.logic.gcal.logic.ce_g.pull()))
+  val ch = io.probe_ch.asUInt.resize(log2Up(nch))
+  io.probe_base := Vec(banks.map(_.logic.gb_q.pull()))(ch)
+  io.probe_zoom := Vec(banks.map(_.logic.gz_q.pull()))(ch)
+  io.probe_enable := Vec(banks.map(_.logic.ge_q.pull()))(ch)
 }
 
 class ToneDriver(val io: TonePorts) {
-  import Reference._
+  import TestSupport._
   val clock = new Clock(io.clk)
   io.rst #= true
   io.go #= false; io.cw #= false; io.en #= true

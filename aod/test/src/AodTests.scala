@@ -2,9 +2,9 @@ package riscq.aod
 
 import utest._
 
-/** Scala stimulus and assertions, with the original SystemVerilog as the DUT. */
-object AodReferenceTests extends TestSuite {
-  import Reference._
+/** Standalone engine regression against local numerical fixtures and invariants. */
+object AodTests extends TestSuite {
+  import TestSupport._
   lazy val tone = config.compile(new ToneDut)
   lazy val linear = ProfileChecks.generate()
   // Resolve fixtures before entering Spinal's elaboration thread (Scala 2 lazy

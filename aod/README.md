@@ -1,150 +1,138 @@
-# AOD reference regression
+# Standalone SpinalHDL AOD engine
 
-Run from the RISC-Q checkout:
+The `aod` Mill module contains the tone generator and its tests. It needs no
+external AOD checkout, hand-written HDL, implementation selector, or AOD-specific
+environment settings. The implementation and all DUTs are SpinalHDL components.
+
+From the RISC-Q checkout, run:
 
 ```bash
 ./mill --no-server aod.test
 ```
 
-This independent Mill module reuses RISC-Q's pinned Scala, SpinalHDL, Verilator,
-and uTest infrastructure. It does not compile or connect the RISC-Q SoC and needs
-no firmware compiler, Vivado, or board. Requirements are the normal SpinalSim
-C++ toolchain, Verilator 5, and Python 3 with NumPy for profile generation and FFT
-analysis. Scala drives the HDL and captures results; the original Python
-generators and analysis tools remain the numerical oracles. A nonzero Python
-exit status fails the Mill test. This avoids translating both the hardware and
-its numerical checks at the same time and adds no Python dependency beyond what
-the profile checks already required.
-`--no-server` is optional; it also avoids stale Mill daemon state.
+Requirements are RISC-Q's pinned Scala/SpinalHDL toolchain, Verilator 5, the normal
+SpinalSim C++ toolchain, and Python 3 with NumPy for profile/calibration generation
+and FFT analysis. No firmware compiler, Vivado, board, or SoC build is needed.
 
-To run one case or a subset:
+To run a subset:
 
 ```bash
-./mill --no-server aod.test.testOnly riscq.aod.AodReferenceTests -- 'riscq.aod.AodReferenceTests.cw'
-./mill --no-server aod.test.testOnly riscq.aod.AodReferenceTests -- 'riscq.aod.AodReferenceTests.{pulsed,cw}'
-./mill --no-server aod.test.testOnly riscq.aod.AodReferenceTests -- 'riscq.aod.AodReferenceTests.{gcalGenerated128,gcalGenerated256,spectrumCw,spectrumNegative,spectrumComb,spectrumChirp}'
+./mill --no-server aod.test.testOnly riscq.aod.AodTests -- 'riscq.aod.AodTests.{pulsed,cw}'
+./mill --no-server aod.test.testOnly riscq.aod.AodModelTests
 ```
 
-By default the reference is the sibling `../AODToneGeneration` checkout. After
-moving it, use an absolute path:
+Generate the default 32-tone, two-channel engine with packaged coefficients:
 
 ```bash
-AOD_REFERENCE_ROOT=/path/to/AODToneGeneration ./mill --no-server aod.test
+./mill --no-server aod.runMain riscq.aod.AodGenerate out/aod-rtl
 ```
 
-The reference RTL and fixture memories are read directly from that checkout.
-Generated profiles, simulator builds, and generator logs go under the ignored
-`aod/simWorkspace/` directory. No tracked reference tables are regenerated.
-The starting reference revision is `1defd33dd6f1a25d932ecf4b7ba5ea4fff72c476`;
-RISC-Q was at `289d921f9f612ec5c32aacbb65438f04b7716dcb` when this suite was added.
+The output directory defaults to `out/aod-rtl` when omitted. For custom
+coefficients, pass `<rom-directory> <output-directory>` instead; the directory
+must contain `aod_unit.mem` and `aod_seed.mem`. Keep the generated initialization
+files beside the generated Verilog when consuming it with other tools.
 
-The stimulus and assertions live in Scala and run through
-`SimConfig.compile(...).doSim(...)`. BlackBoxes instantiate the original
-SystemVerilog. The two adapters in `rtl/` only expose read-only observations that
-the original benches access hierarchically. They contain no test stimulus,
-assertions, or replacement datapath behavior. Clock and active-high synchronous
-reset are explicit pins; drivers change inputs with clock low and sample settled
-outputs after rising edges. AXI waits and other polling loops have bounds.
+Scala callers can instantiate `new AodTop(AodConfig.default)` or construct an
+`AodConfig` with explicit coefficient paths and geometry. The default tables are
+classpath resources, extracted for elaboration; they also work when packaged in
+a jar. Tests load their fixtures and numerical tools from local classpath
+resources. Simulator builds, generated profiles, captures and Python logs go to
+ignored `aod/simWorkspace/run-*/` directories, isolated per test JVM.
 
-Simulation uses `--x-initial 0` to match the original standalone Verilator
-runner's startup state. SpinalSim otherwise randomizes uninitialized registers;
-the reference has unreset write-enable distribution stages that can overwrite
-initialized calibration entries during reset under that mode. Random-startup
-robustness is therefore outside this regression's equivalence contract. The
-reference RTL is preserved, including this behavior.
+## Implementation
 
-The index diagnostic also preserves the original inter-shot cadence (eight
-clocks after observing idle, then six setup clocks). At decimation greater than
-one, the reference can keep advancing segment-position state while idle; a
-longer wait changes later adopted-index measurements. The test records the
-original stimulus and its published values, rather than imposing a new
-idle-state policy.
-
-| Scala test | Original coverage |
+| Component | Purpose |
 | --- | --- |
-| `cordic` | `tb_cordicg`: 256 phases, gain retained, error below 64 datapath LSB; checks both I and Q |
-| `profiles` | Both Python generation groups: linear/minjerk preparation, cubic exact endpoints at dec=1,2,4,8,16, fit deviation at most 6000 LSB |
-| `pulsed` | `tb_aod_tg_tone1`: 20,000 golden samples within 4 DAC LSB, eight arbitrary deltas, exact endpoints, ratio 4/7 clamp equivalence, exact decimated durations |
-| `indices` | `tb_aod_tg_index`: runtime identity trajectory, adopted indices at all five decimations |
-| `cw` | `tb_aod_tg_cw`: continuous phase and valid stream, 22-clock dwell, measured period, modular periodicity solve, identical I/Q sweeps |
-| `gcal256`, `gcal128`, `gcal128TwoCurves` | All three `tb_aod_gcal` configurations: unity, impulse addressing, signed clamp/wrap, both interpolation slopes, zoom, bypass, independent curves |
-| `registers` | `tb_aod_tg_regs`: all tone fields, invalid accesses, capabilities, masks, configuration status, counter, sweep/phase snapshot, pulsed silence, clipping/W1C, triggers, queued/dropped launches, soft reset |
-| `gcalAxi` | `tb_aod_tg_gcal`: all entries and both channels, per-tone copies, selector isolation, trajectory/envelope preservation, configuration distribution, live lookup and bypass |
-| `gcalGenerated128`, `gcalGenerated256` | `tb_aod_gcal_real` plus `check_gcal_real.py`: generated calibration tables from the supplied synthetic sweep, 4000 frequency offsets plus four clamp/wrap cases, exact model agreement |
-| `spectrumCw` | `tb_aod_tg_spectrum` and `tg_spectrum.py`: final packed converter words for a +20 MHz tone; worst spur below -70 dBc and mirrored image below -40 dBc |
-| `spectrumNegative` | Final packed converter words for a -20 MHz tone; mirrored image below -40 dBc |
-| `spectrumComb` | Eight enabled tones from -20 to +20 MHz; every peak within 0.05 MHz of its target and level spread below 1.5 dB |
-| `spectrumChirp` | Repeating -10 to +10 MHz sweeps using linear and minimum-jerk trajectories; linear ripple at most 3 dB and less than minimum-jerk ripple |
+| `AodTone` | Writable profiles, forward differences, frequency scaling, phase accumulation, amplitude processing, pulsed/CW control |
+| `AodCordic` | Buffered rotation-mode CORDIC with gain retained and a pipelined valid tag |
+| `AodGcal` | Frequency-indexed lookup, signed interpolation and gain/application clamps |
+| `AodBank` | Configuration distribution, phase scan, registered sum tree and saturation |
+| `AodRound` | Final converter quantization, saturation and MSB alignment |
+| `AodRegisters` | Standalone AXI register transport and readback |
+| `AodTop` | Triggers, counters, snapshots, sticky status and I/Q packing |
 
-There are sixteen uTest cases: the original nine simulation runs, the two Python
-groups combined into `profiles`, and six cases for the two additional bench
-families. All nine SV testbench files in the reference checkout now have their
-functional scenarios represented. Failed Scala assertions and failed Python
-checks fail the Mill command.
-Compared with the original benches, the adopted indices are asserted rather than
-only printed; calibration initialization and replication cover both tones on both
-channels; and the AXI driver checks read and write responses. The additional
-benches' dump-completion messages alone do not count as a pass: their Python
-comparisons must also pass. The comb analyzer originally only reports levels;
-Scala additionally asserts peak locations and a spread bound that allows for
-FFT-window scalloping. Chirp comparison additionally asserts that the linear
-profile is flatter than minimum-jerk, rather than just printing the comparison.
+`AodConfig` exposes tone/channel count, rate limits, trajectory geometry,
+calibration depth, fanout and physical DAC precision. Arithmetic uses ACC=32,
+UW=30, NDIFF=3, XW=20, AMP_FRAC=16, CALW=16, CAL_FRAC=15, DAC_BITS=16 and a
+22-stage buffered CORDIC. Tables already compensate CORDIC gain. The contract is
+one complex sample per clock, packed as `{sin,cos}` in two 16-bit slots. The
+optional historical repetition into additional output slots is omitted.
 
-Spectral tests record 65,536 raw converter words per capture after startup has
-settled and require that the capture did not clip. They exercise summation,
-16-to-14-bit rounding, and final I/Q packing. The linear chirp table is generated
-for decimation 16, matching the chirp stimulus. The supplied minimum-jerk table
-is used for the comparison; it is not required to have a flat spectrum.
+Clock and active-high synchronous reset are explicit pins. Reset only touches
+the state specified by the engine; arithmetic pipelines and coefficient memories
+have no reset. Calibration initializes to unity. Profile rows use independent
+beat-addressed memory banks, including beat 3's alias to the final slice.
 
-The calibration test uses `examples/example_sweep.txt`, which is explicitly
-synthetic. The original `gen_gcal_table.py` produces both the table and its
-placement metadata; Scala loads it into the BlackBox, sweeps frequency, and
-passes the captured results to the original `check_gcal_real.py`. Both signed
-slope directions are required in the fixture. This proves consistency of the
-generated table and the fixed-point RTL interpretation without needing the
-absent measured calibration files. It does not validate a physical crystal's
-calibration. Dumps and analysis logs are under `aod/simWorkspace/calibration/`
-and `aod/simWorkspace/spectrum/`.
+The control/status bundles separate register transport from waveform banks.
+The AXI interface retains the established address/data overlap requirement,
+ignored byte strobes/protection bits, decode aliases and response timing.
+Native RISC-Q posted writes, scheduled launch, converter rate adaptation and
+finish-and-hold remain separate integration work. Generated port and hierarchy
+names require an audit of Vivado constraints before synthesis; FPGA timing and
+analog behavior have not been validated.
 
-The tone adapter pins the shipped 6250-step, 64-row, 98-step geometry and 16-bit
-DAC format. The profile test checks these fixture assumptions explicitly. The
-register tests use two and four tones per channel on two channels, while spectral
-tests use eight tones on one channel, as in the original benches. They do not test
-default-size FPGA timing or analog behavior. GUI/CLI/agent behavior, Vivado build
-gates, board measurements, exhaustive parameter coverage, and randomized-startup
-robustness remain outside this suite.
+## Tests and numerical fixtures
 
-This establishes executable expectations before translating the datapath. Later
-SpinalHDL implementations can replace individual bindings while retaining the
-same drivers and assertions. Golden-vector tolerance is historical (the vector
-predates a CORDIC change); future direct RTL-versus-Spinal comparisons should aim
-for exact integer equality. No scheduling, bus bridge, converter adaptation, or
-finish-and-hold behavior is added here.
+`AodTests` has sixteen functional cases. `AodModelTests` adds four cases; there
+is one implementation under test, without a duplicate legacy-implementation
+suite.
 
-Validated on 2026-10-18 with Verilator 5.020 and seed 42:
+| Cases | Coverage |
+| --- | --- |
+| `cordic` | 256 phases, I/Q accuracy against trigonometry with gain retained |
+| `profiles` | Linear/minimum-jerk preparation, cubic endpoints at all five decimations and fit-error bound |
+| `pulsed` | 20,000 preserved waveform samples within four DAC LSB, arbitrary signed deltas, exact endpoints, rate clamp and decimated durations |
+| `indices` | Runtime identity trajectory, adopted indices at decimation 1/2/4/8/16 |
+| `cw` | Exact phase advancement, no valid gaps, 22-clock reload dwell, 6669-clock period, solved periodicity and identical I/Q sweeps |
+| `gcal256`, `gcal128`, `gcal128TwoCurves` | Unity, impulse addresses, signed clamps, both interpolation slopes, zoom, bypass and independent curves |
+| `registers` | Tone fields, invalid accesses, masks, capabilities, configuration status, counters, snapshots, silence, clipping/W1C, triggers, pending/dropped launches and soft reset |
+| `gcalAxi` | Both channels and all per-tone copies, selector isolation, profile preservation, live calibration and bypass |
+| `gcalGenerated128`, `gcalGenerated256` | Synthetic calibration sweep, 4004 exact integer comparisons at each depth |
+| `spectrumCw`, `spectrumNegative`, `spectrumComb`, `spectrumChirp` | Final converter words, spur/image bounds, eight-tone locations/levels and linear/minimum-jerk chirp ripple |
+| `roundingExhaustive` | All signed 16-bit inputs at 14/16-bit precision and all 8-bit inputs at 2-bit precision; samples, saturation and reset |
+| `cordicStreaming` | 20,000 consecutive random signed I/Q inputs, phases and tags against an integer model; exact 24-clock latency and phase residual |
+| `gcalStreaming` | 20,000 random clocks at each of two geometries against a stateful memory/lookup model, including writes, signed slopes, clamps and changing configuration |
+| `runtimeProfiles` | Rewritten trajectory/envelope tables, positive/negative envelope slopes, beat aliases, non-unity calibration, signed displacement, decimation and disabled tone |
 
-- Original `run_tests.sh`: 11 groups passed, 0 failed, with generated tables
-  redirected outside the reference checkout.
-- `./mill --no-server aod.test`: 16 cases passed, 0 failed (about 70 seconds
-  with cached dependencies and simulator builds on the development machine).
-- Golden waveform: 20,000 samples, maximum deviation 2 DAC LSB against the
-  preserved vector (allowed 4). CORDIC: maximum error 8 of its 20-bit LSB.
-- CW: period 6669 clocks, reload dwell 22 clocks, adjacent captures of 6668
-  I/Q samples bit identical; the final run checked 93,235 exact phase advances.
-- Generated calibration tables: 4004/4004 outputs bit exact at each of 128 and
-  256 entries, including the added clamp/wrap cases.
-- Final converter-word spectra: worst CW spur -74.5 dBc; mirrored image
-  -82.4 dBc for both frequency signs; eight-tone level spread 0.75 dB;
-  linear chirp ripple 0.83 dB versus minimum-jerk ripple 2.91 dB.
-- In a temporary copy of the reference, disabling calibration writes made both
-  the module and AXI calibration tests fail. Reloading phase during CW restart
-  made the phase-continuity assertion fail. The combined mutation run returned
-  a nonzero exit status with all three selected cases failing as intended.
-- Additional mutations in a temporary reference copy: swapping final I/Q lanes
-  failed `spectrumNegative`; treating a negative interpolation slope as unsigned
-  failed `gcalGenerated128` with 1085 mismatched points. Both failures propagated
-  from the original Python checkers to the Scala runner and Mill exit status.
+The streaming models are test-only Scala arithmetic. CORDIC angles are computed
+from `atan` independently of the implementation's integer constant table. The
+calibration model tracks its own memory image and lookup/application timing.
+Rounding expectations use integer arithmetic and check the saturation flag too.
 
-Local logs include `out/aod-test.log`, `out/aod-analysis-tests.log`,
-`out/aod-mutations.log`, `out/aod-analysis-mutations.log`, and
-`out/aod-analysis-restored.log`; generated files and logs are not tracked.
+The runtime-profile case checks a SHA-256 trace over all 54,070 clocks, including
+I/Q samples, valid, busy/done, accumulated phase, dropped launches, live increment,
+phase and trajectory state. This trace was captured with per-clock live SV
+comparisons enabled before those bindings were removed. Its field encoding and
+expected digest are recorded in `runtime-profile.properties`.
+
+The coefficient tables, original 20,000-sample waveform vector, geometry and
+synthetic sweep are local resources. `provenance.json` records their source
+revision/paths and original hashes, together with the provenance of the four
+Python numerical tools. Those tools retain the established generation and FFT
+checks; the profile generator was adapted to accept explicit local source tables
+and no longer copies a Verilog configuration header. The sample vector predates
+the current CORDIC, hence its historical four-LSB tolerance; all integer-model
+and trace checks require exact agreement.
+
+The original standalone behavior was checked against live SV before removing
+that dependency. The retained Scala CORDIC attribution identifies its QubiC
+origin. Provenance is historical context and imposes no checkout dependency.
+
+Simulation uses seed 42 and zero startup values for otherwise uninitialized
+registers, matching the established regression contract. Configure while idle,
+allow distribution to settle and keep tables/configuration stable during a shot.
+Randomized-startup robustness, formal exhaustive equivalence, default-size FPGA
+timing and physical calibration are outside this suite. The calibration sweep
+is synthetic; spectral tests use two/four/eight-tone geometries, not a board.
+
+Validated on 2026-10-18 with Verilator 5.020:
+
+- `./mill --no-server aod.test`: **20 passed, 0 failed**, including all sixteen
+  functional scenarios and four model/trace cases. Log: `out/aod-standalone-tests.log`.
+- Default 32-tone/two-channel generation succeeds using the packaged profile.
+  Tests and generation also pass with obsolete external-directory settings
+  deliberately pointing at nonexistent paths. Log: `out/aod-standalone-generate.log`.
+- Generated RTL passes Verilator `--lint-only -Wall -Wno-DECLFILENAME
+  -Wno-UNUSEDSIGNAL --top-module AodTop AodTop.v` from its output directory, with
+  no diagnostics. Exclusions cover generated multi-module filenames and unused
+  signals/slices. Log: `out/aod-standalone-lint.log`.
