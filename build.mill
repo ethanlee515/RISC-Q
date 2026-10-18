@@ -37,4 +37,24 @@ object `package` extends ScalaModule {
     def testFramework = "utest.runner.Framework"
     def testSandboxWorkingDir = false
   }
+
+  // Standalone reference-RTL regression; no SoC, firmware, or RF integration.
+  object aod extends ScalaModule {
+    def scalaVersion = buildScalaVersion
+    override def moduleDeps = Seq(moduleRefs("core"), moduleRefs("lib"), moduleRefs("idslplugin"), moduleRefs("sim"))
+    override def scalacOptions = super.scalacOptions() ++ modulePluginOptions()
+
+    object test extends ScalaTests {
+      def mvnDeps = Seq(mvn"com.lihaoyi::utest:0.8.5")
+      def testFramework = "utest.runner.Framework"
+      def testSandboxWorkingDir = false
+      def referenceRoot = Task.Input {
+        sys.env.getOrElse("AOD_REFERENCE_ROOT", (moduleDir / os.up / os.up / os.up / "AODToneGeneration").toString)
+      }
+      override def forkEnv = super.forkEnv() ++ Map(
+        "AOD_REFERENCE_ROOT" -> referenceRoot(),
+        "AOD_TEST_ROOT" -> (moduleDir / os.up).toString,
+      )
+    }
+  }
 }
