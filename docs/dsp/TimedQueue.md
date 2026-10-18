@@ -1,6 +1,6 @@
 # TimedQueue — lead-time fire scheduler (`riscq.dsp.pulse`)
 
-**Source:** `src/riscq/dsp/pulse/TimedQueue.scala`, `src/riscq/dsp/pulse/TimedQueueVariants.scala`
+**Source:** `timing/src/TimedQueue.scala` (shared `timing` Mill module), `src/riscq/dsp/pulse/TimedQueueVariants.scala`
 · **Package:** `riscq.dsp.pulse` · **Type:** Component(s) over a shared `TimedQueueIo` / `TimedQueueLike`
 
 A queue that **latches `startTime` at enqueue and pops/fires at the exact `dspClk` cycle the head
@@ -20,8 +20,10 @@ window is scheduled the same way: it is the valid window of a demod-carrier puls
 
 ## Contract
 
-- **`io.push`** — `Stream(TimedEntry{data, startTime})`. A `Stream` (not a `Flow`) so Tilelink glue
-  sees backpressure when the queue is full.
+- **`io.push`** — `Stream(TimedEntry{data, startTime})`, with backpressure when full.
+  A posted-write frontend must handle this explicitly: existing pulse-generator
+  glue relies on software pacing, while the standalone AOD scheduler rejects
+  excess fires and reports overflow. `ready` does not propagate through a posted `Flow`.
 - **`io.pop`** — `Flow(data)`. Fires **once per entry**, at `time = startTime − leadTime`. External
   cmd→pop **latency is 0** for every implementation.
 - **`io.time`** — the external SoC batch-time counter (a +1/cycle counter).

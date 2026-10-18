@@ -52,6 +52,8 @@ case class AodStatus(p: AodConfig) extends Bundle {
 }
 
 object AodRegisterMap {
+  val fire = 0x00
+  val startTime = 0x4100
   val control = 0x08
   val ratio = 0x0c
   val decimation = 0x10

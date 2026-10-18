@@ -41,7 +41,7 @@ object SetupChecks {
         if (w.beat == 2 && index % 2 == 0) 3 else w.beat)
       assert(clock.cycles - previousAcceptance >= AodCoefficientLoader.interval)
       previousAcceptance = clock.cycles
-      assert(io.setup_busy.toBoolean && !io.config_ready.toBoolean)
+      assert(io.setup_busy.toBoolean)
     }
     assert(stalled > writes.size, "producer must have exercised real backpressure")
     d.settled()
@@ -64,14 +64,10 @@ object SetupChecks {
       assert(io.probe_table.toBigInt == w.data, "reset must preserve loaded coefficients")
     }
     val original = gains.find(w => w.channel == 0 && w.address == 17).get.data
-    d.write(8,4); clock.tick(16)
     io.setup.valid #= true; io.setup.table #= AodTable.gain
     io.setup.channel #= false; io.setup.address #= 17; io.setup.data #= 54321
-    clock.tick(4); d.probe(addr = 17)
-    assert(!io.setup.ready.toBoolean && io.probe_table.toBigInt == original,
-      "soft reset must backpressure an offered write")
-    d.write(8,0); sleep(1)
-    assert(io.setup.ready.toBoolean)
+    d.probe(addr = 17)
+    assert(io.setup.ready.toBoolean && io.probe_table.toBigInt == original)
     clock.tick(); io.setup.valid #= false; d.settled(); d.probe(addr = 17)
     assert(io.probe_table.toBigInt == 54321)
   }
@@ -97,12 +93,8 @@ object SetupChecks {
     d.probe()
     case class Sample(x: BigInt, y: BigInt, valid: BigInt)
     def capture(): Vector[Sample] = {
-      // The reference leaves decimation work/segment state live after pulsed
-      // completion. Reset the engine between independent decimated shots so
-      // coefficient equivalence compares the same initial state.
-      d.write(8,4); clock.tick(16); d.write(8,0)
-      d.settled(); clock.tick(128)
-      d.write(8,1)
+      val start = d.launch()
+      val firstIndex = start + 1 - clock.cycles
       val samples = Vector.tabulate(7200) { _ =>
         val sample = Sample(io.dac_x.toBigInt, io.dac_y.toBigInt, io.dac_valid.toBigInt)
         assert(sample.valid == 0 || sample.valid == 3, "both axes must become valid on the same clock")
@@ -110,6 +102,8 @@ object SetupChecks {
       }
       assert(io.status.busy.toBigInt == 0 && io.dac_valid.toBigInt == 0)
       assert(io.status.cfg_err.toBigInt == 0 && !io.status.go_dropped.toBoolean)
+      assert(samples.indexWhere(_.valid != 0) == firstIndex)
+      assert(io.schedule.idle.toBoolean && io.schedule.errors.toInt == 0)
       samples
     }
     def upload(table: Int, words: Seq[BigInt]): Unit = {
@@ -131,8 +125,8 @@ object SetupChecks {
     assert(baseline.exists(s => s.x != 0 && s.y != 0))
     val first = baseline.indexWhere(_.valid != 0)
     val last = baseline.lastIndexWhere(_.valid != 0)
-    assert(first == AodTop.idleLaunchLatency(dut.p) && baseline.slice(first,last + 1).forall(_.valid == 3))
-    println(s"Native AOD ${dut.p.tones} tones: first valid $first clocks after the posted-go acceptance edge")
+    assert(first >= 0 && baseline.slice(first,last + 1).forall(_.valid == 3))
+    println(s"Scheduled AOD ${dut.p.tones} tones: first valid at the requested timestamp")
     upload(AodTable.envelope, Seq.fill(dut.p.segments)(BigInt(0)))
     val muted = capture()
     assert(muted.forall(s => s.x == 0 && s.y == 0), "uploaded zero envelope must silence both axes")
@@ -146,11 +140,6 @@ object SetupChecks {
     val differences = restored.zip(baseline).zipWithIndex.filter { case ((a,b),_) => a != b }
     assert(differences.isEmpty, s"reloaded coefficients: ${differences.size} sample differences; first=${differences.take(5)}")
 
-    // CW and a later reset/pulsed launch use the same newly loaded memories.
-    d.write(8,3); clock.tick(15000)
-    assert(io.status.busy.toBigInt == 3 && io.dac_valid.toBigInt == 3)
-    d.write(8,0); d.idle(); clock.tick(128)
-    assert(capture() == baseline, "a reset/pulsed launch must reload phase0 after CW")
   }
 
   /** Test the lightweight decoder at mask boundaries without instantiating

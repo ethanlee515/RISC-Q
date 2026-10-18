@@ -1,14 +1,15 @@
 # Standalone AOD interface
 
-`AodTop` has no AXI or TileLink ports and does not instantiate RISC-Q SoC
-components. It composes `AodRegisters`, `AodCoefficientLoader` and `AodEngine`.
-The waveform arithmetic and coefficient formats are unchanged.
+`AodTop` is the canonical standalone component. It composes staged posted
+register writes, the shared RISC-Q timed queue, snapshot storage, coefficient
+loading and `AodEngine`. There are no AXI/TileLink ports or SoC dependencies.
+See [SCHEDULING.md](SCHEDULING.md) for timing constants, queue capacity/pacing,
+errors, reset behavior and the RF-off intervals between pulsed movements.
 
-All ports use `clk`. `rst` is active-high and synchronous. The explicit clock
-and selective reset behavior of the arithmetic blocks is preserved: reset does
-not clear coefficient memories or every arithmetic register. The normal shell
-is `AodTop`; direct `AodEngine` users must supply stable `AodControl` values and
-correctly spaced coefficient events themselves.
+All ports use `clk`; `rst` is synchronous, active-high. `time` is an externally
+supplied 32-bit counter incrementing every AOD clock. Coefficient memories and
+arithmetic registers retain the engine's selective reset behavior. Reset flushes
+queued/active work and forces the top's packed sample outputs to zero.
 
 ## Setup: coefficient loading
 
@@ -32,95 +33,87 @@ respectively. Reserved table values and out-of-range payloads are unsupported.
 
 The loader preserves the bank's held-enable write distribution. Accepted writes
 are separated by at least **8 AOD clocks**; backpressure enforces this spacing.
-The shell also holds ready low during hard or software soft reset.
-`setup_busy` stays high while the last accepted write drains. Acceptance means
-the loader has taken responsibility for a write, not that every memory copy has
-already been updated. Finish the upload, deassert `setup.valid`, and wait for
-`config_ready` before launching. A future host adapter must preserve the
-ready/valid handshake and cross clock domains explicitly; AXI/TileLink bus
+`setup.ready` is also low during reset or while any movement is queued,
+preparing, playing or draining, including its phase snapshot. `setup_busy` stays
+high while an accepted write drains through the broadcast pipeline. Acceptance
+is not completion of every memory copy. Finish the upload, deassert
+`setup.valid`, and wait for `setup_busy` low before submitting movements.
+A future host adapter must preserve the ready/valid handshake and cross clock
+domains explicitly; AXI/TileLink bus
 protocols are not present inside this standalone module.
 
-Setup is supported only with the waveform engine idle, sample pipelines drained,
-CW stopped, software soft reset clear, external triggers disabled, and no
-launch pending/in flight. Do not issue launches or soft reset during upload.
-`setup.ready` controls write spacing; it is not an assertion that these playback
-preconditions hold. Concurrent table modification/playback is unspecified. Reset
-interrupting an upload may leave partially updated tables; upload again before
-use. Reset after a completed upload preserves the tables.
+Tables are shared by all jobs and are not part of the per-movement snapshot.
+The top enforces setup/playback exclusion. An offered write waits until all
+outstanding jobs drain; a simultaneous fire is rejected with `setupConflict`.
+Reset interrupting an upload may leave partial tables; upload again before use.
+Reset after a completed upload preserves the tables.
 
-## Runtime: posted register writes
+## Runtime: posted staging and fire
 
-`cmd` is a Spinal `Flow[AodWrite]`: `valid`, a **16-bit byte address** and 32-bit
-`data`. Every valid rising edge delivers one write, including adjacent valid
-edges. There is no acknowledgment, ready signal or synchronous read path. This
-matches the shape of RISC-Q's posted `Put` without depending on its SoC module.
-Only aligned, full-word writes are supported. Unmapped and misaligned writes
-have no effect; historical address aliases, AXI responses and sentinel reads
-are removed.
+`cmd` is a Spinal `Flow[AodWrite]`: valid, a 16-bit byte address and 32-bit data.
+Every valid rising edge delivers a full-word write, including adjacent edges.
+There is no acknowledgement, ready or synchronous read path. This matches
+RISC-Q's posted `Put` shape. Unmapped/misaligned writes have no effect.
 
 | Byte offset | Write |
 | --- | --- |
-| `0x08` | Control: bit 0 go, 1 CW, 2 soft reset, 3 trigger enable, 4 trigger polarity, 5 phase snapshot |
+| `0x00` | Fire: capture the staged movement and timestamp into the queue; data ignored |
+| `0x4100` | Stage the next movement's first-sample timestamp |
+| `0x08` | Reserved/ignored; no immediate control bypass |
 | `0x0c` | Ratio |
 | `0x10` | Decimation |
-| `0x18` | Clear clipping and dropped-go sticky flags |
+| `0x18` | Clear scheduler errors and engine clipping/dropped-go sticky flags |
 | `0x8000 + axis*0x4000 + field*0x800 + tone*4` | Tone field 0: starting frequency, 1: signed displacement, 2: initial phase, 3: packed calibration endpoints |
 | `0xa800 + axis*0x4000 + 0/4` | Tone-enable bits 0–31 / 32–63 (unimplemented bits ignored) |
 | `0xa800 + axis*0x4000 + 8` | Amplitude scale |
 | `0xa800 + axis*0x4000 + 20` | Calibration enable at bit 0, zoom at bits 2:1 |
 | `0xa800 + axis*0x4000 + 24` | Calibration base frequency |
 
-Control writes replace all level bits together. Go, snapshot and sticky clear
-are one-clock strobes; consecutive command beats represent consecutive requests.
-Keep configuration stable during playback. The pending-go bit stores a request,
-not a snapshot of another movement's configuration. CW restarts retain phase;
-fresh pulsed launches reload `phase0`. Clearing CW finishes the current sweep.
-Finish-and-hold is not implemented.
+Parameter writes update staging only. Fire atomically captures the timestamp
+and all movement fields across both axes; later writes cannot change active or
+queued jobs. Each job reloads its captured `phase0`. The top handles bank soft
+reset and settling automatically; software does not issue a go or reset command.
 
-`config_ready` is a conservative launch prerequisite: register distribution has
-settled, the coefficient loader has drained, no setup write is being offered,
-and soft reset is clear. Configuration writes restart a `tones + 8` clock guard;
-soft reset holds that guard loaded, so its release also settles. Other
-control/clear-sticky strobes do not restart it. It does not mean idle or reserve queue space.
-The existing bank-level early-ratio-launch rejection/`cfg_err` behavior remains;
-the shell does not queue an early launch until configuration becomes ready.
+## Outputs and reporting
 
-The inherited tone implementation leaves decimation work state active after a
-decimated pulsed sweep; its idle-state segment updates can affect the next
-trajectory. This predates the native interface and is intentionally unchanged.
-For reproducible independent shots with decimation greater than one, assert
-software soft reset for at least 8 clocks, clear it, then wait for `config_ready`
-before launching. This preserves loaded tables and tone configuration. Do not
-reset between automatic CW sweeps: their phase-continuous behavior is preserved.
+`schedule` exposes queued count, active/idle/capacity, sticky scheduling errors
+and accepted/started/completed counters. Empty FIFO is not the same as idle:
+active includes preparation, sample drain and automatic phase-snapshot drain.
+See the scheduling contract for exact definitions and malformed-job handling.
 
-## Outputs and future integration
+`status` exposes engine busy, clipping, configuration errors, sweep/trigger/fabric
+counters and snapshot activity. `pa_we` marks a phase event with `pa_ch`,
+`pa_addr` (tone) and `pa_data`; capture events on their valid edge. There is no
+internal readback RAM or event backpressure. The eventual SoC adapter must route
+status/events explicitly. Native engine busy excludes some lifecycle phases;
+use `schedule` for top-level job/setup availability.
 
-`status` exposes per-axis busy, clipping, configuration errors and sweep counts;
-trigger/fabric counters; snapshot activity; decimation clamping; and dropped-go
-status. `pa_we` marks one phase-snapshot event with `pa_ch`, `pa_addr` (tone) and
-`pa_data`. Consumers capture each event on its valid edge. There is no internal
-snapshot readback RAM or flow control on these events. A later SoC adapter must
-choose the reporting/readback route explicitly.
+`dac_x`/`dac_y` pack `{sin,cos}` in two 16-bit slots with physical-DAC rounding
+and MSB alignment. `dac_valid` tags each axis's final packed output on the same
+clock. This is one complex sample per AOD clock, with no converter backpressure.
+The top drives zero outside valid output. `startTime` refers to the first valid
+sample here; downstream RFDC/interpolation/mixer latency remains board work.
 
-`dac_x`/`dac_y` retain `{sin,cos}` packing in two 16-bit slots, with physical-DAC
-rounding/MSB alignment. Each `dac_valid` bit tags that axis's packed output on
-the same clock. These are one complex sample per AOD clock; valid is an
-observation tag, not converter backpressure. Pulsed output drains to zero; CW
-keeps continuous sample validity through reload dwell. Output values outside
-valid retain the historical pipeline behavior and should not be interpreted as
-valid waveform samples.
+## Direct engine use
 
-For an idle engine with configuration settled, the first valid converter word
-arrives **`53 + ceil(log2(tones))` clocks after the edge accepting a posted go**
-(`AodTop.idleLaunchLatency`). The registered runtime decode contributes one
-clock. Tests assert this at two/four/eight tones, for pulsed and CW launch.
-Pending busy-time go requests and asynchronous external triggers have different
-timing contracts; this is not an absolute timestamp scheduler.
+`AodEngine` is the lower-level waveform component, not a second runtime top.
+It takes native `AodControl` and coefficient-event ports. Its pulsed/CW, trigger,
+phase snapshot, pending-go and selective-reset behavior is unchanged. Tests of
+these controls drive its ports directly, independently of the scheduled API.
 
-No timestamp queue, host bus adapter, event-sink wiring, firmware ABI, clock
-crossing or RFDC rate/mixer adapter is added here. The eventual scheduler must
-target the chosen output reference point and account for engine plus converter
-latency. Simulation and RTL lint do not establish FPGA timing closure. In
-particular, audit synthesis hierarchy/constraints after the `AodEngine` extraction;
-the coefficient broadcast's held-write behavior remains relevant to multicycle
-constraints.
+Direct users must keep parameters/tables stable during playback and enforce
+coefficient spacing themselves (or use `AodCoefficientLoader`). A fresh pulsed
+go reloads `phase0`; CW restarts preserve phase. The pending-go bit stores only
+a request, not a second movement snapshot. Before launch, allow configuration
+distribution to settle. `AodEngine.launchLatency(p)` is
+`52 + ceil(log2(tones))` clocks from an idle, settled native `control.go`
+acceptance edge to the first final valid word; pending/trigger timing differs.
+
+The inherited decimated-pulse engine can update trajectory work state while
+idle. Direct engine users need soft reset for at least eight clocks between
+independent shots, then a `tones + 8` settling guard. The canonical top automates
+this sequence. Direct CW users should not reset between automatic sweeps.
+
+Host adapters, clock crossing, firmware ABI, converter integration and FPGA
+constraints/timing closure remain future work. Simulation and lint do not
+establish board timing or RF behavior.

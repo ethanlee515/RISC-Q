@@ -120,7 +120,8 @@ case class SrlFifo[T <: Data](dataType: HardType[T], depth: Int) extends Compone
  * `time = startTime − leadTime − timeOffset`, decoupling enqueue-arrival-time from fire-time (the
  * property the posted-link SoC architecture is built on). `leadTime` is the consumer path's
  * latency to the DAC, so the entry is popped that many cycles early and lands at the DAC at
- * `startTime`. Push is a `Stream` so Tilelink glue sees backpressure when full.
+ * `startTime`. Push is a backpressured `Stream`; a posted-Flow frontend must
+ * enforce capacity separately because its stores cannot be stalled here.
  *
  * '''Wrap window — ±2^(timeWidth−1) only.''' The due test is a SIGNED difference of the (free-running,
  * never-reset) `time` and `startTime` (`!(time + leadC1 − startTime).msb`), so it is correct ONLY when

@@ -20,36 +20,33 @@ object SpectralChecks {
     word(if (mhz < 0) -magnitude else magnitude)
   }
 
-  private def capture(compiled: SimCompiled[TopDut], shot: Shot): Path = {
+  private def capture(compiled: SimCompiled[EngineDut], shot: Shot): Path = {
     Files.createDirectories(dest)
     val dump = dest / s"${shot.name}.txt"
     compiled.doSim(shot.name, seed = 42) { dut =>
-      val d = new TopDriver(dut.io)
+      val d = new EngineDriver(dut)
       val io = dut.io; val clock = d.clock
       for (t <- 0 until tones) {
         val f0 = if (shot.mode == "comb")
           shot.bb + (shot.bb2 - shot.bb) * t / math.max(shot.count - 1, 1) else shot.bb
         val f1 = if (shot.mode == "chirp") shot.bb2 else f0
         val a = frequencyWord(f0)
-        d.write(TopChecks.tone(0,t,0), a)
-        d.write(TopChecks.tone(0,t,1), word(frequencyWord(f1) - a))
-        d.write(TopChecks.tone(0,t,2), word(BigInt(t) * BigInt("20000000", 16)))
-        d.write(TopChecks.tone(0,t,3), BigInt("80008000", 16))
+        d.tone(0,t,a,word(frequencyWord(f1) - a), word(BigInt(t) * BigInt("20000000", 16)))
       }
-      d.write(TopChecks.en(0), (BigInt(1) << shot.count) - 1)
-      d.write(TopChecks.amp(0), 4096)
+      io.control.tone_en #= (BigInt(1) << shot.count) - 1
+      io.control.amp_scale(0) #= 4096
       val chirp = shot.mode == "chirp"
-      d.write(0xc, if (chirp) 16 else 512)
-      d.write(0x10, if (chirp) 16 else 1)
+      io.control.ratio #= (if (chirp) 16 else 512)
+      io.control.dec #= (if (chirp) 16 else 1)
       clock.tick(128)
       val launchEdge = clock.cycles + 1
       var firstValid = -1L
       clock.after = () => {
         if (firstValid < 0 && io.dac_valid.toBigInt != 0) firstValid = clock.cycles
       }
-      d.write(8, if (chirp) 3 else 1)
+      d.launch(cw = chirp)
       clock.tick(64)
-      assert(firstValid - launchEdge == AodTop.idleLaunchLatency(dut.p))
+      assert(firstValid - launchEdge == AodEngine.launchLatency(dut.p))
       clock.after = () => ()
       clock.until("nonzero converter output", 1000)(io.dac_x.toBigInt != 0)
       clock.tick(256)
@@ -77,18 +74,18 @@ object SpectralChecks {
     log
   }
 
-  def cw(compiled: SimCompiled[TopDut]): Unit = {
+  def cw(compiled: SimCompiled[EngineDut]): Unit = {
     val dump = capture(compiled, Shot("cw-positive", "cw", 20, 20))
     check(dump, "cw", Seq("--spur-dbc", "-70"))
     check(dump, "mirror", Seq("--mirror-dbc", "-40"))
   }
 
-  def negative(compiled: SimCompiled[TopDut]): Unit = {
+  def negative(compiled: SimCompiled[EngineDut]): Unit = {
     val dump = capture(compiled, Shot("mirror-negative", "mirror", -20, -20))
     check(dump, "mirror", Seq("--mirror-dbc", "-40"))
   }
 
-  def comb(compiled: SimCompiled[TopDut]): Unit = {
+  def comb(compiled: SimCompiled[EngineDut]): Unit = {
     val dump = capture(compiled, Shot("comb", "comb", -20, 20, tones))
     val log = check(dump, "comb")
     // The original script only reports comb levels. Require all eight requested
@@ -102,7 +99,7 @@ object SpectralChecks {
     assert(levels.max - levels.min < 1.5, s"comb tone-level spread=${levels.max - levels.min} dB")
   }
 
-  def chirp(linear: SimCompiled[TopDut], minjerk: SimCompiled[TopDut]): Unit = {
+  def chirp(linear: SimCompiled[EngineDut], minjerk: SimCompiled[EngineDut]): Unit = {
     val ramp = capture(linear, Shot("chirp-linear", "chirp", -10, 10))
     val smooth = capture(minjerk, Shot("chirp-minjerk", "chirp", -10, 10))
     val log = check(ramp, "chirp", Seq("--max-ripple", "3", "--compare", smooth.toString))

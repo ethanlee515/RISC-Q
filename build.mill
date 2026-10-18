@@ -12,7 +12,7 @@ object `package` extends ScalaModule {
   def moduleRefs = moduleInfo._1
   def modulePluginOptions = moduleInfo._2()
 
-  override def moduleDeps = Seq(moduleRefs("core"), moduleRefs("lib"), moduleRefs("idslplugin"), moduleRefs("sim"))
+  override def moduleDeps = Seq(moduleRefs("core"), moduleRefs("lib"), moduleRefs("idslplugin"), moduleRefs("sim"), timing)
 
   override def scalacOptions = super.scalacOptions() ++ modulePluginOptions()
 
@@ -38,10 +38,17 @@ object `package` extends ScalaModule {
     def testSandboxWorkingDir = false
   }
 
+  // Shared timing primitive; no dependency on either waveform engine or the SoC.
+  object timing extends ScalaModule {
+    def scalaVersion = buildScalaVersion
+    override def moduleDeps = Seq(moduleRefs("core"), moduleRefs("lib"), moduleRefs("idslplugin"))
+    override def scalacOptions = super.scalacOptions() ++ modulePluginOptions()
+  }
+
   // Standalone SpinalHDL AOD engine and numerical regression.
   object aod extends ScalaModule {
     def scalaVersion = buildScalaVersion
-    override def moduleDeps = Seq(moduleRefs("core"), moduleRefs("lib"), moduleRefs("idslplugin"), moduleRefs("sim"))
+    override def moduleDeps = Seq(moduleRefs("core"), moduleRefs("lib"), moduleRefs("idslplugin"), moduleRefs("sim"), timing)
     override def scalacOptions = super.scalacOptions() ++ modulePluginOptions()
 
     object test extends ScalaTests {

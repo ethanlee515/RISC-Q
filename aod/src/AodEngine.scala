@@ -3,6 +3,13 @@ package riscq.aod
 import spinal.core._
 import spinal.lib._
 
+object AodEngine {
+  /** Clocks from a settled idle control.go acceptance edge to the first final
+    * valid sample. Pending requests and asynchronous triggers differ.
+    */
+  def launchLatency(p: AodConfig): Int = 52 + log2Up(p.tones)
+}
+
 /** Bus-independent waveform engine. Configuration must settle before launch;
   * coefficient writes are supplied by AodCoefficientLoader during idle setup.
   */

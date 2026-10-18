@@ -11,8 +11,9 @@ object AodTests extends TestSuite {
   // initializers on this object share a monitor).
   lazy val top4 = { val roms = linear; config.compile(new TopDut(4, roms)) }
   lazy val top2 = { val roms = linear; config.compile(new TopDut(2, roms)) }
-  lazy val spectrumLinear = { val roms = linear.resolveSibling("linear_dec16"); config.compile(new TopDut(8, roms, nch = 1)) }
-  lazy val spectrumMinjerk = { val roms = linear.resolveSibling("minjerk"); config.compile(new TopDut(8, roms, nch = 1)) }
+  lazy val spectrumLinear = { val roms = linear.resolveSibling("linear_dec16"); config.compile(new EngineDut(AodConfig(roms.resolve("aod_unit.mem"), roms.resolve("aod_seed.mem"), tones = 8, channels = 1))) }
+  lazy val spectrumMinjerk = { val roms = linear.resolveSibling("minjerk"); config.compile(new EngineDut(AodConfig(roms.resolve("aod_unit.mem"), roms.resolve("aod_seed.mem"), tones = 8, channels = 1))) }
+  lazy val engine4 = { val roms = linear; config.compile(new EngineDut(AodConfig(roms.resolve("aod_unit.mem"), roms.resolve("aod_seed.mem"), tones = 4))) }
   val tests = Tests {
     test("cordic") { config.compile(new CordicDut).doSim(seed = 42)(NumericalChecks.cordic) }
     test("profiles") { linear }
@@ -22,6 +23,7 @@ object AodTests extends TestSuite {
     test("pulsed") { tone.doSim("pulsed", seed = 42)(ToneChecks.pulsed) }
     test("indices") { tone.doSim("indices", seed = 42)(ToneChecks.indices) }
     test("cw") { tone.doSim("cw", seed = 42)(ToneChecks.cw) }
+    test("engineControl") { engine4.doSim("engineControl", seed = 42)(EngineChecks.control) }
     test("registers") { top4.doSim("registers", seed = 42)(TopChecks.registers) }
     test("gcalSetup") { top2.doSim("gcalSetup", seed = 42)(TopChecks.gcal) }
     test("coefficientLoading") { top2.doSim("coefficientLoading", seed = 42)(SetupChecks.loading) }

@@ -132,11 +132,13 @@ class ToneDut extends Component {
   io.probe_end := dut.logic.mv_end.pull()
 }
 
-class TopPorts(p: AodConfig) extends Bundle {
-  val clk, rst, trig_in = in Bool()
+class TopPorts(val p: AodConfig) extends Bundle {
+  val clk, rst = in Bool()
+  val time = in UInt(32 bits)
   val cmd = slave(Flow(AodWrite()))
   val setup = slave(Stream(AodCoefficientWrite()))
-  val setup_busy, config_ready = out Bool()
+  val setup_busy = out Bool()
+  val schedule = out(AodScheduleStatus(4))
   val status = out(new AodStatus(p))
   val control = out(new AodControl(p)) // test-only observation, not a production read bus
   val dac_valid = out Bits(p.channels bits)
@@ -156,10 +158,10 @@ class TopDut(nt: Int, roms: Path, nch: Int = 2) extends Component {
   val p = AodConfig(roms / "aod_unit.mem", roms / "aod_seed.mem", tones = nt, channels = nch)
   val io = new TopPorts(p)
   val dut = new AodTop(p)
-  dut.io.clk := io.clk; dut.io.rst := io.rst; dut.io.trig_in := io.trig_in
+  dut.io.clk := io.clk; dut.io.rst := io.rst; dut.io.time := io.time
   dut.io.cmd << io.cmd; dut.io.setup << io.setup
-  io.setup_busy := dut.io.setup_busy; io.config_ready := dut.io.config_ready
-  io.status := dut.io.status; io.control := dut.regs.io.control.pull()
+  io.setup_busy := dut.io.setup_busy; io.schedule := dut.io.schedule
+  io.status := dut.io.status; io.control := dut.staging.io.control.pull()
   io.dac_valid := dut.io.dac_valid
   io.dac_x := dut.io.dac_x; io.dac_y := dut.io.dac_y
   val banks = dut.engine.logic.banks

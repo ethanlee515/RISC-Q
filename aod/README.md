@@ -7,6 +7,11 @@ loading/settling requirements, launch latency and status semantics. It needs no
 external AOD checkout, hand-written HDL, implementation selector, or AOD-specific
 environment settings. The implementation and all DUTs are SpinalHDL components.
 
+`AodTop` is the canonical frontend, with immutable queued movements using RISC-Q's shared
+`TimedQueue`, with first-sample timestamps, explicit schedule errors and automatic
+reset/settling between pulsed jobs. See [SCHEDULING.md](SCHEDULING.md) for the
+posted staging/fire API, pacing, setup lock and RF-off interval semantics.
+
 From the RISC-Q checkout, run:
 
 ```bash
@@ -22,6 +27,7 @@ To run a subset:
 ```bash
 ./mill --no-server aod.test.testOnly riscq.aod.AodTests -- 'riscq.aod.AodTests.{pulsed,cw}'
 ./mill --no-server aod.test.testOnly riscq.aod.AodModelTests
+./mill --no-server aod.test.testOnly riscq.aod.ScheduledTests
 ```
 
 Generate the default 32-tone, two-channel engine with packaged coefficients:
@@ -54,7 +60,7 @@ ignored `aod/simWorkspace/run-*/` directories, isolated per test JVM.
 | `AodRegisters` | One posted address/data write per clock; runtime configuration and command strobes |
 | `AodCoefficientLoader` | Atomic ready/valid setup writes, with enforced broadcast drain spacing |
 | `AodEngine` | Bus-independent banks, triggers, counters, snapshot events, sticky status and I/Q packing |
-| `AodTop` | Standalone shell composing native control, setup and waveform interfaces |
+| `AodTop` | Staged posted writes, immutable timed jobs, reset/settle/launch/drain lifecycle, setup locking and schedule status |
 
 `AodConfig` exposes tone/channel count, rate limits, trajectory geometry,
 calibration depth, fanout and physical DAC precision. Arithmetic uses ACC=32,
@@ -63,28 +69,30 @@ UW=30, NDIFF=3, XW=20, AMP_FRAC=16, CALW=16, CAL_FRAC=15, DAC_BITS=16 and a
 one complex sample per clock, packed as `{sin,cos}` in two 16-bit slots. The
 optional historical repetition into additional output slots is omitted.
 
-Clock and active-high synchronous reset are explicit pins. Reset only touches
-the state specified by the engine; arithmetic pipelines and coefficient memories
-have no reset. Calibration initializes to unity. Profile rows use independent
+Clock and active-high synchronous reset are explicit pins. Reset flushes queued
+and active work; arithmetic pipelines and coefficient memories retain selective
+reset behavior. Calibration initializes to unity. Profile rows use independent
 beat-addressed memory banks, including beat 3's alias to the final slice.
 
 `cmd` is a posted `Flow` with a 16-bit byte address and 32-bit data, matching
 RISC-Q's `Put` shape without a SoC dependency. `setup` is a separate `Stream`
 carrying the table, axis, row, slice and data in one transaction; backpressure
 enforces eight-clock spacing around the existing table broadcast pipeline.
-`config_ready` identifies settled configuration and drained setup writes.
+`AodTop` locks setup while jobs are outstanding and handles reset/settling
+before each timed launch. It exposes queue/lifecycle/error status as `schedule`.
 Status and phase-snapshot events are native outputs; `dac_valid` tags each
 axis's final converter words. The historical AXI wrapper, readback mirror RAMs,
 sentinel reads and decode aliases are removed.
 
-SoC integration, host bus adapters/clock crossing, scheduled launch, converter
+SoC integration, host bus adapters/clock crossing, converter
 rate adaptation and finish-and-hold remain separate work. Generated port and
 hierarchy names require an audit of Vivado constraints before synthesis; FPGA
 timing and analog behavior have not been validated.
 
 ## Tests and numerical fixtures
 
-`AodTests` has nineteen functional/interface cases. `AodModelTests` adds four cases; there
+`AodTests` has twenty functional/interface cases. `AodModelTests` adds four cases;
+`ScheduledTests` adds five scheduler cases. There
 is one implementation under test, without a duplicate legacy-implementation
 suite.
 
@@ -96,17 +104,23 @@ suite.
 | `indices` | Runtime identity trajectory, adopted indices at decimation 1/2/4/8/16 |
 | `cw` | Exact phase advancement, no valid gaps, 22-clock reload dwell, 6669-clock period, solved periodicity and identical I/Q sweeps |
 | `gcal256`, `gcal128`, `gcal128TwoCurves` | Unity, impulse addresses, signed clamps, both interpolation slopes, zoom, bypass and independent curves |
-| `registers` | Consecutive posted writes, tone fields, unmapped writes, masks, settling/status, counters, snapshot events, silence, clipping/W1C, triggers, pending/dropped launches, soft reset and four-tone launch latency |
+| `registers` | Canonical-top consecutive posted writes, tone fields, unmapped writes, masks, ratio/decimation staging and ignored legacy controls |
+| `engineControl` | Direct native engine ports: counters, snapshots, clipping/clear, triggers, pending/dropped requests, soft reset and four-tone launch latency |
 | `gcalSetup` | Both channels and all per-tone copies, profile/calibration isolation, live lookup and bypass through native setup |
 | `coefficientLoading` | Continuously offered writes under backpressure, interleaved trajectory/envelope/calibration writes, every row/slice and tone copy, reset stalls, drain and memory persistence |
-| `profilesThroughSetup` | Load-to-waveform behavior: mute envelope, change trajectory, restore exact converter trace after reset, synchronized axes, two-tone latency and CW output |
+| `profilesThroughSetup` | Load-to-waveform behavior: mute envelope, change trajectory, restore exact converter trace after reset, synchronized axes, two-tone timestamped launches and repeated shots |
 | `registerGeometry` | Native decoder with one/two axes and 2/33/64 tones, including high mask words and absent-axis isolation |
 | `gcalGenerated128`, `gcalGenerated256` | Synthetic calibration sweep, 4004 exact integer comparisons at each depth |
-| `spectrumCw`, `spectrumNegative`, `spectrumComb`, `spectrumChirp` | Final converter words, eight-tone launch latency, spur/image bounds, eight-tone locations/levels and linear/minimum-jerk chirp ripple |
+| `spectrumCw`, `spectrumNegative`, `spectrumComb`, `spectrumChirp` | Final converter words, eight-tone native-engine launch latency, spur/image bounds, eight-tone locations/levels and linear/minimum-jerk chirp ripple |
 | `roundingExhaustive` | All signed 16-bit inputs at 14/16-bit precision and all 8-bit inputs at 2-bit precision; samples, saturation and reset |
 | `cordicStreaming` | 20,000 consecutive random signed I/Q inputs, phases and tags against an integer model; exact 24-clock latency and phase residual |
 | `gcalStreaming` | 20,000 random clocks at each of two geometries against a stateful memory/lookup model, including writes, signed slopes, clamps and changing configuration |
 | `runtimeProfiles` | Rewritten trajectory/envelope tables, positive/negative envelope slopes, beat aliases, non-unity calibration, signed displacement, decimation and disabled tone |
+| `immutableJobs` | Exact scheduled output versus native-port engine traces, both-axis snapshots, active/queued staging isolation and repeated decimated jobs |
+| `errorsAndReset` | Full pending budget, overflow, reset flush, insufficient lead, invalid parameters, order and overlapping-job rejection |
+| `setupLockAndLateDispatch` | Backpressured setup through queue/playback/drain, setup conflict and overdue job discard |
+| `wrapAndMinimumLead` | Exact first sample at the minimum enqueue lead across 32-bit timestamp wrap, four tones and one axis |
+| `snapshotStorageGeometry` | Banked snapshot elaboration at 32/64 tones with both axes, queue depths 1/3/4 |
 
 The streaming models are test-only Scala arithmetic. CORDIC angles are computed
 from `atan` independently of the implementation's integer constant table. The
@@ -136,7 +150,8 @@ Simulation uses seed 42 and zero startup values for otherwise uninitialized
 registers, matching the established regression contract. Configure while idle,
 allow distribution to settle and keep tables/configuration stable during a shot.
 The inherited decimated-pulse idle-state behavior can affect the next trajectory;
-use an engine soft reset between independent decimated shots, as documented in
+use an engine soft reset between independent decimated shots (automated by
+`AodTop`), as documented in
 [INTERFACE.md](INTERFACE.md). The new upload/restore comparison uses this explicit
 reset contract; the preserved block-level integer trace remains unchanged.
 Randomized-startup robustness, formal exhaustive equivalence, default-size FPGA
@@ -145,11 +160,15 @@ is synthetic; spectral tests use two/four/eight-tone geometries, not a board.
 
 Validated on 2026-10-18 with Verilator 5.020:
 
-- `./mill --no-server aod.test`: **23 passed, 0 failed**, including nineteen
-  functional/interface scenarios and four unchanged model/trace cases. Log: `out/aod-native-tests.log`.
-- Default 32-tone/two-channel generation succeeds using the packaged profile.
-  Log: `out/aod-native-generate.log`.
+- `./mill --no-server aod.test`: **29 passed, 0 failed**, including twenty
+  functional/interface scenarios, four unchanged model/trace cases and five
+  scheduler cases. Log: `out/aod-tests.log`.
+- Default 32-tone/two-channel canonical-top generation succeeds using the
+  packaged profile. Log: `out/aod-generate.log`.
 - Generated RTL passes Verilator `--lint-only -Wall -Wno-DECLFILENAME
   -Wno-UNUSEDSIGNAL --top-module AodTop AodTop.v` from its output directory, with
   no diagnostics. Exclusions cover generated multi-module filenames and unused
-  signals/slices. Log: `out/aod-native-lint.log`.
+  signals/slices. Log: `out/aod-lint.log`.
+- The main RISC-Q build compiles against the shared timing module, and
+  `./mill --no-server runMain riscq.dsp.pulse.sim.TimedQueueSim` passes all
+  scenarios with both head-stage settings. Log: `out/aod-scheduled-queue.log`.
